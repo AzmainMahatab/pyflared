@@ -29,8 +29,7 @@ def get_path() -> str:
     if not path.exists():
         raise FileNotFoundError(
             f"Bundled cloudflared binary not found at {path}. "
-            "This wheel is expected to include the binary. If you are building the wheel yourself, "
-            "use `hatch build` — the Hatch build hook will automatically bundle the latest upstream cloudflared."
+            "Install the package (non-editable) so the wheel's bin/ is available, or build and install the wheel."
         )
     # Ensure executable bit on POSIX
     if os.name != "nt":
@@ -57,8 +56,21 @@ def main(argv: List[str] | None = None) -> int:
         return 130
 
 
-def version():
-    return main(["--version"])
+def version() -> str:
+    """
+    Return the cloudflared version string by invoking the binary with --version.
+    """
+    binary = get_path()
+    # Capture stdout; cloudflared prints version to stdout and may include extra info
+    try:
+        completed = subprocess.run([binary, "--version"], check=True, capture_output=True, text=True)
+        out = (completed.stdout or "").strip()
+        # Return first line to keep it succinct
+        return out.splitlines()[0] if out else ""
+    except subprocess.CalledProcessError as e:
+        # Include stderr if available to aid debugging
+        msg = (e.stdout or "" + e.stderr or "").strip()
+        raise RuntimeError(f"cloudflared --version failed: {msg}") from e
 
 
 if __name__ == "__main__":
