@@ -8,6 +8,7 @@ build-backend = "hatchling.build"
 [project]
 name = "pyflared"
 dynamic = ["version"]
+wrapper_version = 1
 description = ''
 readme = "README.md"
 requires-python = ">=3.8"
@@ -27,20 +28,18 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
-dependencies = []
+dependencies = [
+    "cloudflare",
+]
 
 [project.urls]
 Documentation = "https://github.com/Azmain/pyflared#readme"
 Issues = "https://github.com/Azmain/pyflared/issues"
 Source = "https://github.com/Azmain/pyflared"
 
-#[tool.hatch.version]
-#path = "src/pyflared/__about__.py"
-[tool.hatch.metadata.hooks.custom]
 
+[tool.hatch.metadata.hooks.custom]
 [tool.hatch.build.hooks.custom]
-#path = "hatch_build.py"
-#dependencies = ["requests"]
 
 [tool.hatch.build.targets.sdist]
 exclude = [
@@ -57,20 +56,16 @@ extra-dependencies = [
 [tool.hatch.envs.types.scripts]
 check = "mypy --install-types --non-interactive {args:src/pyflared tests}"
 
-#[tool.hatch.envs.test]
-#dev-mode = false
-#dependencies = [
-#    "pytest"
-#]
+[tool.hatch.envs.test]
+dev-mode = false
+extra-dependencies = [
+    "pytest"
+]
 
 [tool.coverage.run]
 source_pkgs = ["pyflared", "tests"]
 branch = true
 parallel = true
-omit = [
-    "src/pyflared/__about__.py",
-]
-
 
 [tool.coverage.paths]
 pyflared = ["src/pyflared", "*/pyflared/src/pyflared"]
@@ -83,4 +78,3 @@ exclude_lines = [
     "if TYPE_CHECKING:",
 ]
 
-wrapper_version = 1
