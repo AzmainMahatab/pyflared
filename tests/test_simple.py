@@ -1,4 +1,4 @@
-from pyflared import binary
+from pyflared import cloudflared
 
 
 def test_binary() -> str | None:

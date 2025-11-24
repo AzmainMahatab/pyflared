@@ -1,23 +1,19 @@
 import socket
 from collections import defaultdict
 from datetime import datetime
-from itertools import chain
-from typing import Iterator, Generator, Any
 from functools import cache
+from typing import Iterator, Generator, Any
 
 from cloudflare import Cloudflare
 from cloudflare.types import CloudflareTunnel
-from cloudflare.types.accounts import Account
 from cloudflare.types.dns import record_list_params, record_batch_params
 from cloudflare.types.dns.record_response import CNAMERecord
-from cloudflare.types.magic_transit.connectors.snapshot_get_response import Tunnel
-from cloudflare.types.zero_trust import seat
-from cloudflare.types.zero_trust.tunnels.cloudflared.configuration_update_params import Config
-from cloudflare.types.zero_trust.tunnels.cloudflared.configuration_update_response import ConfigIngress
+from cloudflare.types.zero_trust.tunnels.cloudflared.configuration_update_params import Config, ConfigIngress
 from cloudflare.types.zones import Zone
 from pydantic import HttpUrl
 from pydantic.dataclasses import dataclass
 
+from pyflared import cloudflared
 from pyflared.A import ZoneRecords
 
 
@@ -29,13 +25,15 @@ class Mapping:
 
 _tag = "pyflared-managed"
 
-
-def f1s(tunnel: CloudflareTunnel) -> bool:
-    pass
+_cfargotunnel = ".cfargotunnel.com"
 
 
 def _tunnel_id(record: CNAMERecord) -> str:
-    return record.content.removesuffix(".cfargotunnel.com")
+    return record.content.removesuffix(_cfargotunnel)
+
+
+def _dns_content(tunnel_id: str) -> str:
+    return f"{tunnel_id}{_cfargotunnel}"
 
 
 def _is_orphan(tunnel: CloudflareTunnel) -> bool:
@@ -49,93 +47,26 @@ def _is_orphan(tunnel: CloudflareTunnel) -> bool:
     return tunnel.metadata.get(_tag) and tunnel.status in ("inactive", "down")
 
 
-def _dns_content(tunnel_id: str) -> str:
-    return f"{tunnel_id}.cfargotunnel.com"
-
-
-def f1xs(c: Cloudflare):
-    c.zones.list()
-    acs = c.accounts.list()
-    c.zero_trust.tunnels.cloudflared.list()
-
-    pass
-
-
-def f1xs2(c: CloudflareTunnel):
-    pass
-
-
-def f1xs3(c: Zone):
-    pass
-
-
-def f1xs4(c: CNAMERecord):
-    c.zo
-    pass
-
-
-def dwe() -> MCloudflare:
-    accounts = client.accounts.list().result
-
-    pass
-
-
-cln: Cloudflare
-
-
-@dataclass
-class MCloudflare:
-    accounts: list[MAccount] = cln.accounts.list().result
-
-
-@dataclass
-class MAccount:
-    account: Account
-    zones: list[MZone] = cln.zones.list().result
-
-
-@dataclass
-class MZone:
-    zone: Zone
-    tunnel_records: list[CNAMERecord]
-
-
 class TunnelManager:
     def __init__(self, api_token: str):
         self.client = Cloudflare(api_token=api_token)
         default_account = self.client.accounts.list().result[0]
 
     @cache
-    def accounts(self):
+    def initial_accounts(self):
         return self.client.accounts.list().result
 
     @cache
-    def zones(self):
+    def initial_zones(self):
         return self.client.zones.list().result
-
-    def account_orphan_cleanup(self, account_id: str):
-        tunnels = self.client.zero_trust.tunnels.cloudflared.list(account_id=account_id).result
-
-        # self.client.zero_trust.tunnels.cloudflared.configurations.
-
-        for tunnel in tunnels:
-            if _is_orphan(tunnel):
-                self._remove_tunnel(tunnel)
-
-        pass
-
-    def zone_orphan_cleanup(self, zone_id: str):
-        dns_records = self.client.dns.records.list()
-
-        pass
 
     def remove_orphans(self):
         # get all dns
         zone_records = self.all_cname_records()
 
         # get all tunnels
-        tunnels: dict[str, CloudflareTunnel] = {}
-        for account in self.accounts():
+        tunnels: dict[str, CloudflareTunnel] = {}  # tunnel.id -> tunnel
+        for account in self.initial_accounts():
             a_tunnels = self.client.zero_trust.tunnels.cloudflared.list(
                 account_id=account.id).result
             for tunnel in a_tunnels:
@@ -145,14 +76,12 @@ class TunnelManager:
                     tunnels[tunnel.id] = tunnel
 
         # remove all dns from the list which doesn't exist in tunnel list
-        # rem_candidates: list[record_batch_params.Delete] = []
-        rem_candidates: defaultdict[str, list[record_batch_params.Delete]] = defaultdict(list)
+        rem_candidates: defaultdict[str, list[record_batch_params.Delete]] = defaultdict(list)  # zone_id -> deletes
         for zone_id, record_list in zone_records.items():
             for record in record_list:
                 if _tunnel_id(record) not in tunnels.keys():
                     del_id = record_batch_params.Delete(id=record.id)
                     rem_candidates[zone_id].append(del_id)
-                    # rem_candidates.append()
 
         for zone_id, deletes in rem_candidates.items():
             self.client.dns.records.batch(
@@ -175,7 +104,7 @@ class TunnelManager:
         now = datetime.now()
 
         tunnel = self.client.zero_trust.tunnels.cloudflared.create(
-            account_id=self.accounts()[0].id,
+            account_id=self.initial_accounts()[0].id,
             name=device_name + "_" + now.strftime("%Y%m%d_%H%M%S"),
             extra_body={
                 "metadata": {
@@ -184,15 +113,15 @@ class TunnelManager:
             }
         )
 
+        zoned_records: defaultdict[str, list[record_batch_params.CNAMERecordParam]] = defaultdict(
+            list)  # zone_id -> records
+        zone_set = {z.name: z for z in self.initial_zones()}
+
         ingresses = [
             ConfigIngress(service="http_status:404")  # default fallback
         ]
-
         for mapping in mappings:
-            x = record_batch_params.CNAMERecordParam(
-                name=mapping.domain,
-
-            )
+            self.zones_for_domains2x(zoned_records, zone_set, mapping, tunnel.id)
             ingresses.append(
                 ConfigIngress(
                     hostname=mapping.domain,
@@ -200,73 +129,57 @@ class TunnelManager:
                 )
             )
 
-        self.client.dns.records.batch(posts=)
+        self.client.zero_trust.tunnels.cloudflared.configurations.update(
+            account_id=tunnel.account_tag,
+            tunnel_id=tunnel.id,
+            config=Config(ingress=ingresses)
+        )
 
-        pass
+        for zone_id, new_records in zoned_records.items():
+            self.client.dns.records.batch(posts=new_records, zone_id=zone_id)
 
-    def zones_for_domains2(self, *mappings: Mapping):
-        # Initialize with list to avoid checking if key exists
-        grouped: defaultdict[Zone, list[record_batch_params.CNAMERecordParam]] = defaultdict(list)
+        token = self.client.zero_trust.tunnels.cloudflared.token.get(tunnel_id=tunnel.id, account_id=tunnel.account_tag)
 
-        # 1. Quick setup for lookup
-        zone_set = {z.name: z for z in self.zones()}
+        return token
 
-        for mapping in mappings:
-            domain = mapping.domain
-            domain_clean = domain.lower()
-            parts = domain_clean.split('.')
-            found_zone: Zone | None = None
-
-            # 2. Find Zone logic
-            for i in range(len(parts)):
-                candidate = ".".join(parts[i:])
-                if found_zone := zone_set.get(candidate):
-                    break
-
-            if found_zone:
-                # 3. APPEND to the list for this zone
-                record = record_batch_params.CNAMERecordParam(
-                    name=domain,
-                    type="CNAME",
-                )
-                grouped[found_zone].append(record)
-            else:
-                raise ValueError(f"No matching zone found for: {domain}")
-
-        return grouped
+    def f1(self, *mappings: Mapping):
+        self.remove_orphans()
+        tunnel_token = self.tunnel2(*mappings)
+        binary.cloudflared(["tunnel", "run", "--token", tunnel_token])
 
     def zones_for_domains2x(
             self,
-            grouped: defaultdict[Zone, list[record_batch_params.CNAMERecordParam]],
+            grouped: defaultdict[str, list[record_batch_params.CNAMERecordParam]],
             zone_set: dict[str, Zone],
-            mapping: Mapping):
+            mapping: Mapping,
+            tunnel_id: str, ):
 
         domain = mapping.domain
         domain_clean = domain.lower()
         parts = domain_clean.split('.')
         found_zone: Zone | None = None
 
-        # 2. Find Zone logic
+        # 2. Find Zone
         for i in range(len(parts)):
             candidate = ".".join(parts[i:])
             if found_zone := zone_set.get(candidate):
+                record = record_batch_params.CNAMERecordParam(
+                    name=domain,
+                    type="CNAME",
+                    content=_dns_content(tunnel_id),
+                    proxied=True,
+                    comment=_tag,
+                )
+                grouped[found_zone.id].append(record)
                 break
 
-        if found_zone:
-            # 3. APPEND to the list for this zone
-            x = record_batch_params.CNAMERecordParam(
-                name=domain,
-                type="CNAME",
-            )
-            grouped[found_zone].append(x)
-        else:
+        if not found_zone:
             raise ValueError(f"No matching zone found for: {domain}")
-
         return grouped
 
     def all_cname_records(self) -> ZoneRecords:
         records: ZoneRecords = {}
-        for zone in self.zones():
+        for zone in self.initial_zones():
             records[zone.id] = self.client.dns.records.list(zone_id=zone.id, type="CNAME").result
         return records
 
