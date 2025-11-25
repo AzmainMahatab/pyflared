@@ -8,6 +8,7 @@ from cloudflare import Cloudflare
 from cloudflare.types import CloudflareTunnel
 from cloudflare.types.dns import record_list_params, record_batch_params
 from cloudflare.types.dns.record_response import CNAMERecord
+from cloudflare.types.zero_trust.tunnel_list_response import TunnelWARPConnectorTunnel
 from cloudflare.types.zero_trust.tunnels.cloudflared.configuration_update_params import Config, ConfigIngress
 from cloudflare.types.zones import Zone
 from pydantic import HttpUrl
@@ -67,8 +68,9 @@ class TunnelManager:
         # get all tunnels
         tunnels: dict[str, CloudflareTunnel] = {}  # tunnel.id -> tunnel
         for account in self.initial_accounts():
-            a_tunnels = self.client.zero_trust.tunnels.cloudflared.list(
-                account_id=account.id).result
+            a_tunnels: list[CloudflareTunnel] = self.client.zero_trust.tunnels.cloudflared.list(
+                account_id=account.id).result # type: ignore
+
             for tunnel in a_tunnels:
                 if _is_orphan(tunnel):
                     self._remove_tunnel(tunnel)
@@ -121,7 +123,10 @@ class TunnelManager:
             ConfigIngress(service="http_status:404")  # default fallback
         ]
         for mapping in mappings:
-            self.zones_for_domains2x(zoned_records, zone_set, mapping, tunnel.id)
+            self.zones_for_domains2x(
+                zoned_records, zone_set, mapping,
+                tunnel.id  # type: ignore
+            )
             ingresses.append(
                 ConfigIngress(
                     hostname=mapping.domain,
@@ -130,8 +135,8 @@ class TunnelManager:
             )
 
         self.client.zero_trust.tunnels.cloudflared.configurations.update(
-            account_id=tunnel.account_tag,
-            tunnel_id=tunnel.id,
+            account_id=tunnel.account_tag,  # type: ignore
+            tunnel_id=tunnel.id,  # type: ignore
             config=Config(ingress=ingresses)
         )
 

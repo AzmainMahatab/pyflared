@@ -2,6 +2,7 @@ import os
 import stat
 import subprocess
 import sys
+from functools import cache
 from os import PathLike
 from pathlib import Path
 
@@ -11,15 +12,18 @@ __all__ = ["get_path", "cloudflared", "version", "start_tunnel_with_token", "sta
 from pyflared.wer.a import test
 
 
+@cache
 def _bin_dir() -> Path:
     # Bin directory lives inside the installed package
     return Path(__file__).resolve().parent / "bin"
 
 
+@cache
 def _binary_filename() -> str:
     return "cloudflared" + ".exe" if os.name == "nt" else ""
 
 
+@cache
 def get_path() -> Path:
     """
     Return the absolute path to the bundled cloudflared binary.

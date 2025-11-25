@@ -44,10 +44,7 @@ class _Service(AsyncIterator[StdOut | StdErr]):
         return self._process.returncode is None
 
     async def __anext__(self):
-        # Check if process died + queue empty (Exited without writing anything)
-        if not self.is_running and self._queue.empty():
-            raise StopAsyncIteration
-
+        # The Monitor guarantees that 'None' will arrive when the process is done, so we don't need to check returncode here.
         if event := await self._queue.get():
             return event
         raise StopAsyncIteration
@@ -72,7 +69,7 @@ class _ServiceContext(AbstractAsyncContextManager[_Service]):
         except Exception as e:
             logging.error(f"[{self.cmd}] Reader failed: {e}")
 
-    async def _monitor_completion(self, *readers: asyncio.Task):
+    async def _monitor_completion(self, process: asyncio.subprocess.Process, *readers: asyncio.Task):
         # 1. Wait for logs to finish
         if readers:
             await asyncio.gather(*readers, return_exceptions=True)
@@ -81,7 +78,7 @@ class _ServiceContext(AbstractAsyncContextManager[_Service]):
         try:
             # If process is already dead, this returns instantly.
             # If process is still closing, this waits max 1.0s.
-            await asyncio.wait_for(self._process.wait(), timeout=1.0)
+            await asyncio.wait_for(process.wait(), timeout=1.0)
         except (asyncio.TimeoutError, Exception):
             pass
 
@@ -101,28 +98,34 @@ class _ServiceContext(AbstractAsyncContextManager[_Service]):
             stderr=asyncio.subprocess.PIPE
         )
         self._process = process
+        reader_tasks: list[asyncio.Task] = []
 
         # 3. Start Pumps (Manual Task Management required here)
         if stdout := process.stdout:
-            self._tasks.append(
+            reader_tasks.append(
                 asyncio.create_task(
                     self._stream_reader(stdout, StdOut)
                 )
             )
 
         if stderr := process.stderr:
-            self._tasks.append(
+            reader_tasks.append(
                 asyncio.create_task(
                     self._stream_reader(stderr, StdErr)
                 )
             )
+
+        monitor_task = asyncio.create_task(
+            self._monitor_completion(process, *reader_tasks)
+        )
+        self._tasks = reader_tasks + [monitor_task]
 
         return _Service(process, self._queue)
 
     async def __aexit__(self, exc_type, exc, tb):
         logging.info("Stopping binary...")
 
-        # 1. Guard Clause: If start failed, nothing to clean
+        # Guard Clause: If start failed, nothing to clean
         if self._process is None:
             return
 
@@ -138,7 +141,7 @@ class _ServiceContext(AbstractAsyncContextManager[_Service]):
                 # Force kill if it doesn't exit gracefully'
                 proc.kill()
 
-        # 3. Cancel Tasks (Manual TaskGroup logic)
+        # Cancel  Monitor and Readers Tasks
         for t in self._tasks:
             t.cancel()
 
@@ -149,7 +152,3 @@ class _ServiceContext(AbstractAsyncContextManager[_Service]):
 class CloudflareTunnelService(_ServiceContext):
     def __init__(self, config: str):
         super().__init__(get_path(), "tunnel", "--config", config, "run")
-
-
-async def fw1(process: asyncio.subprocess.Process):
-    a, b = await process.wait()
