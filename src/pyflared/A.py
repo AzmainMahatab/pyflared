@@ -15,7 +15,7 @@ from pydantic.dataclasses import dataclass
 #     zone: Zone
 #     records: list[CNAMERecord]
 
-ZoneRecords = dict[str, list[CNAMERecord]]
+ZoneRecords = dict[str, list[CNAMERecord]]  # zone_id -> records list
 
 
 class TunnelManager:

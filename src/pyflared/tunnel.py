@@ -1,10 +1,13 @@
+import asyncio
+import inspect
 import socket
 from collections import defaultdict
 from datetime import datetime
 from functools import cache
-from typing import Iterator, Generator, Any
+from typing import Iterator, Generator, Any, Callable, Awaitable, Iterable, Tuple, Coroutine
+from unittest import async_case
 
-from cloudflare import Cloudflare
+from cloudflare import Cloudflare, AsyncCloudflare
 from cloudflare.types import CloudflareTunnel
 from cloudflare.types.dns import record_list_params, record_batch_params
 from cloudflare.types.dns.record_response import CNAMERecord
@@ -16,6 +19,7 @@ from pydantic.dataclasses import dataclass
 
 from pyflared import cloudflared
 from pyflared.A import ZoneRecords
+from pyflared.qsfx import async_dict
 
 
 @dataclass
@@ -29,8 +33,8 @@ _tag = "pyflared-managed"
 _cfargotunnel = ".cfargotunnel.com"
 
 
-def _tunnel_id(record: CNAMERecord) -> str:
-    return record.content.removesuffix(_cfargotunnel)
+def _tunnel_id(record: CNAMERecord) -> str | None:
+    return record.content.removesuffix(_cfargotunnel) if record.content else None
 
 
 def _dns_content(tunnel_id: str) -> str:
@@ -45,39 +49,110 @@ def _is_orphan(tunnel: CloudflareTunnel) -> bool:
     #         (tunnel.status == "inactive" and tunnel.created_at < threshold) or (
     #         tunnel.status == "down" and tunnel.conns_inactive_at and tunnel.conns_inactive_at < threshold)
     # )
-    return tunnel.metadata.get(_tag) and tunnel.status in ("inactive", "down")
+    return tunnel.metadata.get(_tag) and tunnel.status in ("inactive", "down")  # type: ignore
+
+
+def fz(z: asyncio.Task[list[CNAMERecord]]):
+    z.result()
+
+
+async def f1[T, K, V](kf: Callable[[T], K], vf: Callable[[T], V], *its: T) -> dict[K, V]:
+    d: dict[K, V] = {}
+
+    async def dz():
+        pass
+
+    async with asyncio.TaskGroup() as tg:
+        for i in its:
+            tg.create_task(d.setdefault(kf(i), vf(i)))
+
+    pass
 
 
 class TunnelManager:
     def __init__(self, api_token: str):
-        self.client = Cloudflare(api_token=api_token)
-        default_account = self.client.accounts.list().result[0]
+        self.client = AsyncCloudflare(api_token=api_token)
+        self.semaphore = asyncio.Semaphore(16)
 
-    @cache
-    def initial_accounts(self):
-        return self.client.accounts.list().result
+    async def accounts(self):
+        response = await self.client.accounts.list()
+        return response.result
 
-    @cache
-    def initial_zones(self):
-        return self.client.zones.list().result
+    async def zones(self):
+        response = await self.client.zones.list()
+        return response.result
 
-    def remove_orphans(self):
+    def zones2(self):
+        return self.client.zones.list()
+
+    def accounts2(self):
+        return self.client.accounts.list()
+
+    def tunnels2x(self, account_id: str):
+        return self.client.zero_trust.tunnels.cloudflared.list(account_id=account_id)
+
+    async def del_tunnel(self, tunnel: CloudflareTunnel):
+        await self.client.zero_trust.tunnels.cloudflared.delete(
+            tunnel_id=tunnel.id, account_id=tunnel.account_tag)  # type: ignore
+
+    async def remove_orphan_tunnels(
+            self, account_id: str, tx: dict[str, CloudflareTunnel]):
+        tns = self.tunnels2x(account_id)
+        async for tn in tns:
+            if _is_orphan(tn):  # type: ignore
+                tx[tn.id] = tn
+                await self.del_tunnel(tn)
+
+    async def remove_orphans2(self):
+        z = self.zones2()
+        ac = self.accounts2()
+        tx = {}
+
+        # async for zone in z:
+        #     tnls =
+
+        async def fcs21(tn: CloudflareTunnel):
+            async with self.semaphore:
+                if _is_orphan(tn):
+                    await self.del_tunnel(tn)
+                else:
+                    tx[tn.id] = tn
+
+        async with asyncio.TaskGroup() as tg:
+            async for t1 in self.tunnels2x(a.id):
+
+        async for a in ac:
+            t = self.tunnels2x(a.id)
+            async with asyncio.TaskGroup() as tg:
+                for i in its:
+                    tg.create_task(d.setdefault(kf(i), vf(i)))
+            async for t1 in t:
+                if _is_orphan(t1):
+                    self.client.zero_trust.tunnels.cloudflared.delete(
+                        tunnel_id=t1.id, account_id=t1.account_tag)  # type: ignore
+
+                else:
+                    tx[t1.id] = t1
+
+        pass
+
+    async def remove_orphans(self):
         # get all dns
-        zone_records = self.all_cname_records()
+        zone_records = await self.all_cname_records()
 
-        # get all tunnels
+        # get all alive tunnels
         tunnels: dict[str, CloudflareTunnel] = {}  # tunnel.id -> tunnel
-        for account in self.initial_accounts():
-            a_tunnels: list[CloudflareTunnel] = self.client.zero_trust.tunnels.cloudflared.list(
-                account_id=account.id).result # type: ignore
+        for account in await self.accounts():
+            a_tunnels: list[CloudflareTunnel] = self.client.zero_trust.tunnels.cloudflared.list(  # type: ignore
+                account_id=account.id).result
 
             for tunnel in a_tunnels:
-                if _is_orphan(tunnel):
+                if _is_orphan(tunnel):  # remove orphan tunnels
                     self._remove_tunnel(tunnel)
                 else:
                     tunnels[tunnel.id] = tunnel
 
-        # remove all dns from the list which doesn't exist in tunnel list
+        # remove all dns from the list which doesn't exist in the tunnel list
         rem_candidates: defaultdict[str, list[record_batch_params.Delete]] = defaultdict(list)  # zone_id -> deletes
         for zone_id, record_list in zone_records.items():
             for record in record_list:
@@ -86,12 +161,12 @@ class TunnelManager:
                     rem_candidates[zone_id].append(del_id)
 
         for zone_id, deletes in rem_candidates.items():
-            self.client.dns.records.batch(
+            await self.client.dns.records.batch(
                 zone_id=zone_id, deletes=deletes)
 
     def tunnel2(self, *mappings: Mapping):
         if not mappings:
-            return
+            raise Exception("No mappings provided")
 
         # Cleanup is done, check if the domain is still blocked by someone
         mapped_domains = {x.name for sublist in self.all_cname_records().values() for x in sublist}
@@ -106,7 +181,7 @@ class TunnelManager:
         now = datetime.now()
 
         tunnel = self.client.zero_trust.tunnels.cloudflared.create(
-            account_id=self.initial_accounts()[0].id,
+            account_id=self.accounts()[0].id,
             name=device_name + "_" + now.strftime("%Y%m%d_%H%M%S"),
             extra_body={
                 "metadata": {
@@ -117,7 +192,7 @@ class TunnelManager:
 
         zoned_records: defaultdict[str, list[record_batch_params.CNAMERecordParam]] = defaultdict(
             list)  # zone_id -> records
-        zone_set = {z.name: z for z in self.initial_zones()}
+        zone_set = {z.name: z for z in self.zones()}
 
         ingresses = [
             ConfigIngress(service="http_status:404")  # default fallback
@@ -135,22 +210,17 @@ class TunnelManager:
             )
 
         self.client.zero_trust.tunnels.cloudflared.configurations.update(
-            account_id=tunnel.account_tag,  # type: ignore
-            tunnel_id=tunnel.id,  # type: ignore
+            account_id=tunnel.account_tag, tunnel_id=tunnel.id,  # type: ignore
             config=Config(ingress=ingresses)
         )
 
         for zone_id, new_records in zoned_records.items():
             self.client.dns.records.batch(posts=new_records, zone_id=zone_id)
 
-        token = self.client.zero_trust.tunnels.cloudflared.token.get(tunnel_id=tunnel.id, account_id=tunnel.account_tag)
+        token = self.client.zero_trust.tunnels.cloudflared.token.get(
+            tunnel_id=tunnel.id, account_id=tunnel.account_tag)  # type: ignore
 
         return token
-
-    def f1(self, *mappings: Mapping):
-        self.remove_orphans()
-        tunnel_token = self.tunnel2(*mappings)
-        binary.cloudflared(["tunnel", "run", "--token", tunnel_token])
 
     def zones_for_domains2x(
             self,
@@ -182,41 +252,20 @@ class TunnelManager:
             raise ValueError(f"No matching zone found for: {domain}")
         return grouped
 
-    def all_cname_records(self) -> ZoneRecords:
-        records: ZoneRecords = {}
-        for zone in self.initial_zones():
-            records[zone.id] = self.client.dns.records.list(zone_id=zone.id, type="CNAME").result
-        return records
+    async def all_cname_records(self) -> ZoneRecords:
+        zones = await self.zones()
 
-    def _accessible_zones(self) -> list[Zone]:
-        return self.client.zones.list().result
+        def k_fun(zone: Zone) -> str:
+            return zone.id
 
-    def retry(self):
-        zones = self._accessible_zones()
+        async def v_fun(zone: Zone) -> list[CNAMERecord]:
+            return await self.cname_records(zone.id)
 
-        for zone in zones:
-            tunnels = self._zone_tunnels(zone)
+        return await async_dict(zones, key_func=k_fun, val_func=v_fun, limit=16)
 
-            for tunnel in tunnels:
-                if _is_orphan(tunnel):
-                    self._remove_tunnel(tunnel)
-
-        pass
-
-    def retry2(self, *mappings: Mapping):
-        accounts = self.client.accounts.list().result
-
-        for account in accounts:
-            tunnels = self.client.zero_trust.tunnels.cloudflared.list(
-                account_id=account.id, is_deleted=False).result
-
-            for tunnel in tunnels:
-                if False:
-                    pass
-                elif _is_orphan(tunnel):
-                    self._remove_tunnel(tunnel)
-
-    pass
+    async def cname_records(self, zone_id: str) -> list[CNAMERecord]:
+        response = await self.client.dns.records.list(zone_id=zone_id, type="CNAME")
+        return response.result  # type: ignore
 
     def _zone_for_domain(self, domain: str) -> Zone:
         return next(i for i in self._accessible_zones() if domain.endswith(i.name))
@@ -442,36 +491,119 @@ class TunnelManager:
             service=mapping.service.unicode_string(),
         )
 
-    def tunnel(self, *mappings: Mapping):
-        self.fx2()
 
-        # config: Config = {
-        #     "ingress": [
-        #         ConfigIngress(  # final fallback rule — NO hostname or path allowed
-        #             service="http_status:404"
-        #         )
-        #     ]
-        # }
+def zasw(*x: str):
+    mapped = map(lambda s: s.up(), x)
 
-        zones = self._accessible_zones()
-        record_list = self.client.dns.records.list(
-            zone_id=zone.id).result
 
-        config: Config = {
-            "ingress": [
-                *(
-                    ConfigIngress(
-                        hostname=mapping.domain,
-                        service=mapping.service.unicode_string(),
-                    )
-                    for mapping in mappings if not print(mapping)
-                ),
-                ConfigIngress(service="http_status:404")  # default fallback
-            ]
-        }
+async def unwrap[T](v: T | Awaitable[T]) -> T:
+    match v:
+        case Awaitable(x):
+            return await x
+        case x:
+            return x
 
-        zones = self._accessible_zones()
-        for mapping in mappings:
-            zone = self._find_zone(zones, mapping.domain)
 
+async def unit_work2[T, K, V](
+        t: T,
+        key_func: Callable[[T], K] | Callable[[T], Coroutine[Any, Any, K]],
+        value_func: Callable[[T], K] | Callable[[T], Coroutine[Any, Any, K]]) -> Tuple[K, V]:
+    async with asyncio.TaskGroup() as tg:
+        asyncio.create_task()
+        if asyncio.iscoroutinefunction(key_func):
+            a = tg.create_task(key_func(t))
+        else:
+            a = key_func(t)
+
+
+async def unit_work[T, K, V](
+        t: T,
+        key_func: Callable[[T], K | Coroutine[Any, Any, K]],
+        val_func: Callable[[T], V | Coroutine[Any, Any, V]]) -> Tuple[K, V]:
+    async with asyncio.TaskGroup() as tg:
+        match v:
+            case Awaitable(x):
+                ax
+                x
+        case
+        x:
+        return x
+
+    bx = tg.create_task(val_func(t))
+
+    return ax.result(), bx.result()
+
+
+async def f2s[T, K, V](
+        key_func: Callable[[T], K | Awaitable[K]],
+        val_func: Callable[[T], V | Awaitable[V]],
+        *items: T,
+):
+    x = {}
+    async with asyncio.TaskGroup() as tg:
+        for item in items:
+            ax = tg.create_task()
         pass
+
+
+def create_dict_task[T, K, V](
+        *items: T,
+        key_func: Callable[[T], K | Awaitable[K]],
+        val_func: Callable[[T], V | Awaitable[V]]
+) -> asyncio.Task[dict[K, V]]:
+    """
+    Non-async function that takes variable arguments (items) and two transformation
+    functions (keyword-only recommended due to *items). Returns an asyncio.Task
+    that resolves to a dictionary.
+    """
+
+    async def _worker() -> dict[K, V]:
+        """
+        The internal coroutine that runs inside the Task.
+        Uses TaskGroup for structured concurrency.
+        """
+        n = len(items)
+        if n == 0:
+            return {}
+
+        # Pre-allocate a list to store results in specific order: [k1, v1, k2, v2...]
+        # Since TaskGroup doesn't return results directly, we fill this by index.
+        results: list[Any] = [None] * (n * 2)
+
+        async def _collect(index: int, awaitable: Awaitable[Any]) -> None:
+            """Helper to await a coroutine and place result in the correct slot."""
+            results[index] = await awaitable
+
+        # Python 3.11+ TaskGroup for safer concurrency (cancels siblings on failure)
+        async with asyncio.TaskGroup() as tg:
+            for i, item in enumerate(items):
+                # Schedule key transformation (even index)
+                tg.create_task(_collect(2 * i, unwrap(key_func(item))))
+                # Schedule value transformation (odd index)
+                tg.create_task(_collect(2 * i + 1, unwrap(val_func(item))))
+
+        # Once we exit the 'async with' block, all tasks are finished and successful.
+        # We can now zip the results.
+        results_iter = iter(results)
+        return dict(zip(results_iter, results_iter))  # type: ignore
+
+    # Schedule the coroutine on the current event loop
+    return asyncio.create_task(_worker())
+
+
+def x2[T, K, V](
+        *items: T,
+        key_func: Callable[[T], K | Awaitable[K]],
+        val_func: Callable[[T], V | Awaitable[V]]
+):
+    d = {}
+    sda: K | None = None
+
+    async def unit(it: T):
+        ax = key_func(it)
+        match ax:
+            case Awaitable(ax):
+                k1 = await ax
+                d[k1] = []
+            case K(ax):
+                d[ax] = []

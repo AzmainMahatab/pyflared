@@ -25,7 +25,7 @@ class StdOut(ProcessEvent): pass
 class StdErr(ProcessEvent): pass
 
 
-class _Service(AsyncIterator[StdOut | StdErr]):
+class ProcessInstance(AsyncIterator[StdOut | StdErr]):
     def __init__(self, process: asyncio.subprocess.Process, queue: asyncio.Queue):
         self._process = process
         self._queue = queue
@@ -45,7 +45,7 @@ class _Service(AsyncIterator[StdOut | StdErr]):
         raise StopAsyncIteration
 
 
-class _ServiceContext(AbstractAsyncContextManager[_Service]):
+class ProcessContext(AbstractAsyncContextManager[ProcessInstance]):
     def __init__(self, binary: str | os.PathLike, *args: str):
         self.cmd = str(binary)
         self.args = args
@@ -81,7 +81,7 @@ class _ServiceContext(AbstractAsyncContextManager[_Service]):
         # 3. Release the user
         self._queue.put_nowait(None)
 
-    async def __aenter__(self) -> _Service:
+    async def __aenter__(self) -> ProcessInstance:
         if self._process is not None:
             raise RuntimeError("Context already entered, make a new one")
 
@@ -117,7 +117,7 @@ class _ServiceContext(AbstractAsyncContextManager[_Service]):
 
         self._tasks = reader_tasks + [monitor_task]
 
-        return _Service(process, self._queue)
+        return ProcessInstance(process, self._queue)
 
     async def __aexit__(self, exc_type, exc, tb):
         logging.info("Stopping binary...")
@@ -144,3 +144,12 @@ class _ServiceContext(AbstractAsyncContextManager[_Service]):
         # We just killed the Monitor. If the Monitor didn't run yet,
         # the queue is missing the sentinel. We must add it manually.
         self._queue.put_nowait(None)
+
+    async def _start_background(self) -> int | None:
+        async with self as service:
+            async for event in service:
+                print(event)  # Switch to logs
+        return service.return_code
+
+    def start_background(self) -> asyncio.Task[int | None]:
+        return asyncio.create_task(self._start_background())
