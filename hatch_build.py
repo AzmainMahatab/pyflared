@@ -71,7 +71,7 @@ class BuildHook(BuildHookInterface):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.build_dir = Path(self.root) / ".hatch-build"
+        self.build_dir = Path(self.root) / ".hatch"
         self.download_dir = self.build_dir / "downloads"
         self.binary_dir = self.build_dir / "binary"
 
