@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Callable, Awaitable
 
 
 @dataclass(frozen=True)
@@ -46,9 +47,11 @@ class ProcessInstance(AsyncIterator[StdOut | StdErr]):
 
 
 class ProcessContext(AbstractAsyncContextManager[ProcessInstance]):
-    def __init__(self, binary: str | os.PathLike, *args: str):
+    def __init__(self, binary: str | os.PathLike, *args: str,
+                 async_cmd: Callable[[], Awaitable[tuple[str, ...]]] | None = None):
         self.cmd = str(binary)
         self.args = args
+        self.async_cmd = async_cmd
 
         self._process: asyncio.subprocess.Process | None = None
         self._tasks: list[asyncio.Task] = []
@@ -85,8 +88,13 @@ class ProcessContext(AbstractAsyncContextManager[ProcessInstance]):
         if self._process is not None:
             raise RuntimeError("Context already entered, make a new one")
 
-        logging.info(f"Starting: {self.cmd} {self.args}")
+        if not self.args:
+            if self.async_cmd:
+                self.args = await self.async_cmd()
+            else:
+                raise RuntimeError("No args provided")
 
+        logging.info(f"Starting: {self.cmd} {self.args}")
         # 1. Start Process
         process = await asyncio.create_subprocess_exec(
             self.cmd, *self.args,

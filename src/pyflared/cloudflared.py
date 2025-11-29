@@ -1,16 +1,23 @@
+import asyncio
 import os
 import stat
-import subprocess
 import sys
 from functools import cache
-from os import PathLike
 from pathlib import Path
 
-# Public API
-__all__ = ["get_path", "cloudflared", "version", "start_tunnel_with_token", "start_quick_tunnel"]
+from pyflared.binary.binary import BinaryWrapper
+from pyflared.binary.process import ProcessContext
+from pyflared.tunnel import TunnelManager
+from pyflared.typealias import Mappings
 
-from pyflared.wer.a import test
+__all__ = ["cloudflared_binary", "run_token_tunnel", "run_quick_tunnel", "version"]
 
+
+# class CloudflareBinary(_BinaryWrapper):
+#     def __init__(self):
+#         super().__init__(get_path())
+# def tunnel(token: str):
+#     return _ServiceContext(get_path(), "tunnel", "run", "--token", token)
 
 @cache
 def _bin_dir() -> Path:
@@ -44,36 +51,50 @@ def get_path() -> Path:
     return path
 
 
-def cloudflared(*args: str) -> int:
-    """
-    Console entry point that proxies all arguments to the bundled binary.
-    """
+cloudflared_binary = BinaryWrapper(get_path())
+
+token_tunnel_cmd = "tunnel", "run", "--token"
+quick_tunnel_cmd = "tunnel", "--no-autoupdate", "--url"
+
+
+def run_token_tunnel(token: str) -> ProcessContext:
+    return cloudflared_binary.execute_streaming_response(*token_tunnel_cmd, token)
+
+
+def run_quick_tunnel(service: str):
+    return cloudflared_binary.execute_streaming_response(*quick_tunnel_cmd, service)
+
+
+def run_dns_fixed_tunnel(api_token: str, mappings: Mappings):
+    async def tunnel_token_cmd() -> tuple[str, ...]:
+        tunnel_manager = TunnelManager(api_token)
+        await tunnel_manager.remove_orphans()
+        tunnel_token = await tunnel_manager.fixed_dns_tunnel(mappings)
+        cmd = token_tunnel_cmd + (tunnel_token.__str__(),)
+        return cmd
+
+    return cloudflared_binary.execute_streaming_response_from_async(tunnel_token_cmd)
+
+
+async def version():
+    result = await cloudflared_binary.execute_await_response("--version")
+    if result.return_code != 0:
+        raise ValueError("Version not found")
+    return result.stdout
+
+
+async def main(*args: str):
     if args is None:
         args = sys.argv[1:]
-    binary = get_path()
-    # Use subprocess that inherits stdin/stdout/stderr
-    try:
-        proc = subprocess.Popen([binary, *args])
-        return proc.wait()
-    except FileNotFoundError as e:
-        print(str(e), file=sys.stderr)
-        return 127
-    except KeyboardInterrupt:
-        return 130
+    return await cloudflared_binary.execute_streaming_response(*args).start_background()
 
 
-def version():
-    return cloudflared("--version")
+if __name__ == '__main__':
+    raise SystemExit(asyncio.run(main()))
 
-
-def start_tunnel_with_token(token: str):
-    cloudflared("tunnel", "run", "--token", token)
-
-
-def start_quick_tunnel(service: str):
-    test()
-    cloudflared("tunnel", "--no-autoupdate", "--url", service)
-
-
-if __name__ == "__main__":
-    raise SystemExit(cloudflared())
+# async def version() -> str:
+#     async with _ServiceContext(get_path(), "--version") as service:
+#         async for event in service:
+#             if isinstance(event, StdOut):
+#                 return event.line.strip()
+#     raise ValueError("Version not found")
