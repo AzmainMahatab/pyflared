@@ -60,41 +60,26 @@ def _binary_version() -> str:
     return response.json()["tag_name"]
 
 
-# Move to class
-
-
 class MetadataHook(MetadataHookInterface):
     def update(self, metadata):
-        # binary_path = self._ensure_binary()
-        # version = self._get_version_from_binary(binary_path)
         wrapper_version = self.config.get("wrapper_version", 0)
         binary_version = _binary_version()
         metadata["version"] = f"{binary_version}.{wrapper_version}"
-
-        # print(f"v:{self.target_name}")
-
-    # def _ensure_binary(self) -> Path:
-    #     wrapper_version = self.config.get("wrapper_version", 0)
-    #     pass
 
 
 class BuildHook(BuildHookInterface):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.build_dir = Path(self.root) / ".hatch-build"
+        self.build_dir = Path(self.root) / ".hatch"
         self.download_dir = self.build_dir / "downloads"
         self.binary_dir = self.build_dir / "binary"
 
     def initialize(self, version: str, build_data: dict) -> None:
+        build_data["tag"] = f"py3-none-{list(platform_tags())[-1]}"  # Maximum compatibility since binary is static
 
         if self.target_name != "wheel":
             return
-
-        # if self.target_name == "sdist":
-        #     return
-
-        build_data["tag"] = f"py3-none-{list(platform_tags())[-1]}"
 
         binary_version = _binary_version()
         cb = CloudFlareBinary(binary_version)
@@ -136,8 +121,6 @@ class BuildHook(BuildHookInterface):
                 f.write(response.content)
             if etag := response.headers.get("ETag"):
                 with shelve.open(etag_file) as db: db[cb.link] = etag
-
-    # urlretrieve(asset_url(package_version), _relative_file(get_asset_name()))
 
     def _copy_extract(self, cb: CloudFlareBinary) -> None:
         downloaded_file = self.download_dir / cb.asset_name
