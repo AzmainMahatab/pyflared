@@ -1,7 +1,7 @@
-from pyflared import binary
+from pyflared import cloudflared
 
 
 def test_binary() -> str | None:
-    v = binary.version()
-    print(f"\n[Version] {v}")
-    assert v, "Version should not be empty"
+    version = cloudflared.version()
+    print(version)
+    assert version
