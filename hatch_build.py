@@ -1,13 +1,15 @@
+import hashlib
 import platform
-import shelve
 import shutil
 import tarfile
 from abc import ABC
 from functools import cache
 from pathlib import Path
+
 import requests
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 from hatchling.metadata.plugin.interface import MetadataHookInterface
+from klepto.archives import dir_archive
 from packaging.tags import platform_tags
 
 base_url = "https://github.com/cloudflare/cloudflared/releases/download"
@@ -101,12 +103,28 @@ class BuildHook(BuildHookInterface):
         # Enable caching
         # requests_cache.install_cache(_relative_file('http_cache'), cache_control=True)
 
-        etag_file = self.download_dir / "etag"
-        with shelve.open(etag_file) as db:
-            if old_etag := db.get(cb.link):
-                headers = {"If-None-Match": old_etag}
-            else:
-                headers = {}
+        # etag_file = self.build_dir / "etag"
+
+        etags_dir = self.build_dir / "etags_cache"
+        db = dir_archive(etags_dir, cached=False, serialized=True)
+
+        # with shelve.open(etag_file) as db:
+        #     if old_etag := db.get(cb.link):
+        #         headers = {"If-None-Match": old_etag}
+        #     else:
+        #         headers = {}
+        # db = dir_archive(str(etag_file), cached=False, serialized=True)
+
+        # Helper: Convert URL to a safe filename (MD5 hash)
+        # Required because dir_archive uses keys as filenames, and URLs have illegal chars (:/)
+        key = hashlib.md5(cb.link.encode()).hexdigest()
+
+        # 2. Logic
+        # No 'with' block needed. db.get() reads directly from disk.
+        if old_etag := db.get(key):
+            headers = {"If-None-Match": old_etag}
+        else:
+            headers = {}
 
         # Download file
         response = requests.get(cb.link, headers=headers, stream=True)
@@ -116,11 +134,13 @@ class BuildHook(BuildHookInterface):
         else:
             response.raise_for_status()
             download_file = self.download_dir / cb.asset_name
-            with open(download_file, "wb") as f:
+            with open(download_file, "wb") as file:
                 print(f"Downloading {cb.asset_name}")
-                f.write(response.content)
+                file.write(response.content)
+
+            # 3. Save: Writes happen immediately because cached=False
             if etag := response.headers.get("ETag"):
-                with shelve.open(etag_file) as db: db[cb.link] = etag
+                db[key] = etag
 
     def _copy_extract(self, cb: CloudFlareBinary) -> None:
         downloaded_file = self.download_dir / cb.asset_name

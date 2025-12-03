@@ -1,7 +1,7 @@
 from pyflared import cloudflared
 
 
-def test_binary() -> str | None:
-    version = cloudflared.version()
+async def test_binary() -> str | None:
+    version = await cloudflared.version()
     print(version)
     assert version

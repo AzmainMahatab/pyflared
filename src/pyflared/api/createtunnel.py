@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from uuid import UUID
 
 import aiohttp
@@ -21,7 +21,7 @@ class CreatedTunnel(BaseModel):
     secret: SecretStr
 
     @classmethod
-    def from_cloudflare_response(cls, data: dict[str, Any]) -> CreatedTunnel:
+    def from_cloudflare_response(cls, data: dict[str, Any]) -> Self:
         """
         Custom factory method to parse the nested Cloudflare API response
         into this flat model.
