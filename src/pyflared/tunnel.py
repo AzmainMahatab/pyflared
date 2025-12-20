@@ -10,6 +10,7 @@ from cloudflare.types.dns.record_response import CNAMERecord
 from cloudflare.types.zero_trust.tunnels.cloudflared.configuration_update_params import ConfigIngress, Config
 from cloudflare.types.zones import Zone
 from pydantic import SecretStr
+
 from pyflared import consts
 from pyflared.api.createtunnel import CreatedTunnel, create_tunnel
 from pyflared.typealias import ZoneNameDict, Domain, ZoneId, ZoneNames, Mappings, TunnelIds, CreationRecords
@@ -53,7 +54,7 @@ def dict_first[K, V](d: dict[K, V]) -> tuple[K, V]:
 
 
 class TunnelManager:
-    def __init__(self, api_token: str):
+    def __init__(self, api_token: str | None = None):
         self.client = AsyncCloudflare(api_token=api_token)
         self.semaphore = asyncio.Semaphore(16)
 

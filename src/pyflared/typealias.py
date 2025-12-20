@@ -6,6 +6,7 @@ from cloudflare.types.zones import Zone
 Domain = str
 Service = str
 Mappings = dict[Domain, Service]
+ProcessArgs = tuple[str, ...]
 
 ZoneId = str
 ZoneName = str
