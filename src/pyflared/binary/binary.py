@@ -1,9 +1,10 @@
 import asyncio
 import os
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Awaitable, Callable
 
-from pyflared.binary.process import ProcessContext
+from pyflared.binary.process import ProcessContext, StdOut, StdErr
 
 
 @dataclass(frozen=True)
@@ -13,8 +14,31 @@ class TextResult:
     return_code: int
 
 
+# class ProcessBridge(ABC):
+#
+#     @abstractmethod
+#     async def cmd(self) -> tuple[str, ...]:
+#         pass
+#
+#     def chunk_to_event(self, byte_chunk: bytes, event_type: type[StdOut | StdErr]) -> StdOut | StdErr | None:
+#         if x := byte_chunk.decode().strip():
+#             return event_type(x)
+#         else:
+#             return None
+#
+#     @staticmethod
+#     def from_command(cmd: tuple[str, ...]) -> "ProcessBridge":
+#         class _CmdBridge(ProcessBridge):
+#             async def cmd(self) -> tuple[str, ...]:
+#                 return cmd
+#
+#         return _CmdBridge()
+
+
+
 class BinaryWrapper:
-    def __init__(self, binary: str | os.PathLike):
+
+    def __init__(self, binary: str | os.PathLike, ):
         self.binary = str(binary)
 
     async def execute_await_response(self, *args: str):
