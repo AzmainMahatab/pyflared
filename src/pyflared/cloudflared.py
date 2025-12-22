@@ -1,9 +1,7 @@
-import asyncio
 import atexit
 import os
 import pathlib
 import stat
-import sys
 from contextlib import ExitStack
 from functools import cache
 from importlib.resources import files, as_file
@@ -11,8 +9,6 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Iterator
 
-import argparse
-import typer
 from pyflared.binary.binary import BinaryWrapper
 from pyflared.binary.process import ProcessContext
 from pyflared.tunnel import TunnelManager
@@ -115,12 +111,3 @@ async def version():
     if result.return_code != 0:
         raise ValueError("Version not found")
     return result.stdout
-
-# tunnel id or name
-# async def tunnel_dns_create(tunnel: str, domain: str):
-#     result = await cloudflared_binary.execute_await_response(
-#         "tunnel", "route", "dns", tunnel, domain
-#     )
-#     if result.return_code != 0:
-#         raise ValueError(f"{result.stderr}")
-#     return result.stdout

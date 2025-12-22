@@ -9,15 +9,19 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable, Awaitable, Self
 
+from pydantic import BaseModel
+
+from pyflared.typealias import ProcessArgs
+
 logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
 class ProcessEvent(ABC):
-    line: str  # Move to bytes in future if needed
+    line: str  # Move to bytes in the future if needed
     timestamp: datetime = field(default_factory=datetime.now)
 
-    def __str__(self) -> str:
+    def __repr__(self) -> str:
         # Format timestamp to HH:MM:SS (add .%f if you need milliseconds)
         ts_str = self.timestamp.strftime("%H:%M:%S")
 
@@ -28,6 +32,15 @@ class ProcessEvent(ABC):
         clean_line = self.line.rstrip()
 
         return f"[{ts_str}] [{tag}] {clean_line}"
+
+    def log(self):
+        match self:
+            case StdOut():
+                logger.debug(self)
+            case StdErr():
+                logger.warning(self)
+            case _:
+                logger.info(self)
 
 
 @dataclass(frozen=True)
@@ -69,6 +82,16 @@ def default_line_processor(chunk: bytes, event_type: type[StdOut | StdErr]) -> S
         return None
 
 
+def default_async_cmd(cmd: ProcessArgs) -> AsyncCmd:
+    if not cmd:
+        raise ValueError("No command provided")
+
+    async def _inner() -> ProcessArgs:
+        return cmd
+
+    return _inner
+
+
 @dataclass()
 class ProcessData:
     # binary_path = binary
@@ -79,18 +102,26 @@ class ProcessData:
     async_cmd: AsyncCmd
     line_processor: LineProcessor = default_line_processor
 
+    def run(self):
+        return ProcessContext(self)
+
+    @classmethod
+    def from_binary_and_cmd(cls, binary: str | os.PathLike, cmd: ProcessArgs):
+        return cls(binary, default_async_cmd(cmd))
+
+    @classmethod
+    def from_args(cls, args: ProcessArgs):
+        return cls.from_binary_and_cmd(args[0], args[1:])
+
+
+# pd = ProcessData.from_args("", "version")
+
+# pd2 = pd.
+
 
 class ProcessContext(AbstractAsyncContextManager[ProcessInstance]):
-    def __init__(self, binary: str | os.PathLike, *args: str,
-                 async_cmd: AsyncCmd | None = None,
-                 line_processor: LineProcessor = default_line_processor):
-
-        self.binary_path = binary
-        self.args = args
-
-        self.async_cmd = async_cmd
-
-        self.line_processor = line_processor
+    def __init__(self, process_data: ProcessData):
+        self.process_data = process_data
 
         self._process: asyncio.subprocess.Process | None = None
         self._tasks: list[asyncio.Task] = []
@@ -101,12 +132,12 @@ class ProcessContext(AbstractAsyncContextManager[ProcessInstance]):
     async def _stream_pass(self, stream: asyncio.StreamReader, event_type: type[StdOut | StdErr]):
         try:
             while line_bytes := await stream.readline():
-                if event := self.line_processor(line_bytes, event_type):
+                if event := self.process_data.line_processor(line_bytes, event_type):
                     self._queue.put_nowait(event)
         except Exception as e:
             # Only log if it's not a cancellation error
             if not isinstance(e, asyncio.CancelledError):
-                logger.debug(f"[{self.binary_path}] Reader failed: {e}")
+                logger.debug(f"[{self.process_data.binary_path}] Reader failed: {e}")
             else:
                 logger.debug(f"Reader closed: {e}")
 
@@ -128,16 +159,12 @@ class ProcessContext(AbstractAsyncContextManager[ProcessInstance]):
         if self._process is not None:
             raise RuntimeError("Context already entered, make a new one")
 
-        if not self.args:
-            if self.async_cmd:
-                self.args = await self.async_cmd()
-            else:
-                raise RuntimeError("No args provided")
+        args = await self.process_data.async_cmd()
 
-        logger.info(f"Starting: {self.binary_path} {self.args}")
+        logger.debug(f"Starting: {self.process_data.binary_path} {args}")
         # 1. Start Process
         process = await asyncio.create_subprocess_exec(
-            self.binary_path, *self.args,
+            self.process_data.binary_path, *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
@@ -182,8 +209,8 @@ class ProcessContext(AbstractAsyncContextManager[ProcessInstance]):
                 self._process.kill()
 
         # 2. Cancel ALL Tasks (Monitor included)
-        for t in self._tasks:
-            t.cancel()
+        for task in self._tasks:
+            task.cancel()
 
         # 3. Wait for cancellations to settle
         await asyncio.gather(*self._tasks, return_exceptions=True)
@@ -196,13 +223,19 @@ class ProcessContext(AbstractAsyncContextManager[ProcessInstance]):
     async def start_background(self) -> int | None:
         async with self as service:
             async for event in service:
-                # logger.debug()
-                print(event)  # TODO: Switch to logs
+                event.log()
         return service.return_code
 
 
-quickflare_url_pattern = re.compile(r'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)')
+# class User(BaseModel):
+#     id: int
+#     name: str
+#
+# user = User(id=1, name="Alice")
+# # Pydantic has this built-in by default
+# user2 = user.model_copy(update(name="A"))
 
+quickflare_url_pattern = re.compile(r'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)')
 
 # @dataclass()
 # class VA:
@@ -227,14 +260,14 @@ quickflare_url_pattern = re.compile(r'(https://[a-zA-Z0-9-]+\.trycloudflare\.com
 #
 # va2 = VA2("", 3)
 
-class WE:
-
-    def __init__(self, id1: int):
-        self.id1 = id1
-
-    @classmethod
-    def w(cls) -> Self:
-        return cls(1)
-
-
-we = WE.w()
+# class WE:
+#
+#     def __init__(self, id1: int):
+#         self.id1 = id1
+#
+#     @classmethod
+#     def w(cls) -> Self:
+#         return cls(1)
+#
+#
+# we = WE.w()
