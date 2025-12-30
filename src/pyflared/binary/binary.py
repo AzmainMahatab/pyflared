@@ -1,10 +1,9 @@
 import asyncio
 import os
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Awaitable, Callable
 
-from pyflared.binary.process import ProcessContext, StdOut, StdErr
+from pyflared.binary.process import ProcessContext, ProcessData, AsyncCmd, LineProcessor, default_line_processor
+from pyflared.typealias import ProcessArgs
 
 
 @dataclass(frozen=True)
@@ -14,32 +13,10 @@ class TextResult:
     return_code: int
 
 
-# class ProcessBridge(ABC):
-#
-#     @abstractmethod
-#     async def cmd(self) -> tuple[str, ...]:
-#         pass
-#
-#     def chunk_to_event(self, byte_chunk: bytes, event_type: type[StdOut | StdErr]) -> StdOut | StdErr | None:
-#         if x := byte_chunk.decode().strip():
-#             return event_type(x)
-#         else:
-#             return None
-#
-#     @staticmethod
-#     def from_command(cmd: tuple[str, ...]) -> "ProcessBridge":
-#         class _CmdBridge(ProcessBridge):
-#             async def cmd(self) -> tuple[str, ...]:
-#                 return cmd
-#
-#         return _CmdBridge()
-
-
-
 class BinaryWrapper:
 
-    def __init__(self, binary: str | os.PathLike, ):
-        self.binary = str(binary)
+    def __init__(self, binary: str | os.PathLike[str]):
+        self.binary = binary
 
     async def execute_await_response(self, *args: str):
         proc = await asyncio.create_subprocess_exec(
@@ -59,8 +36,22 @@ class BinaryWrapper:
             proc.returncode or 0,
         )
 
-    def execute_streaming_response(self, *args: str):
-        return ProcessContext(self.binary, *args)
+    # @classmethod
+    # def execute_streaming_response_from_data(cls, data: ProcessData):
+    #     return ProcessContext(data)
 
-    def execute_streaming_response_from_async(self, async_cmd: Callable[[], Awaitable[tuple[str, ...]]]):
-        return ProcessContext(self.binary, async_cmd=async_cmd)
+    def execute_streaming_response(self, *args: str):
+        process_data = ProcessData.from_binary_and_cmd(self.binary, args)
+        return ProcessContext(process_data)
+
+    def execute_streaming_response_from_async(self, async_cmd: AsyncCmd):
+        process_data = ProcessData(self.binary, async_cmd)
+        return ProcessContext(process_data)
+
+
+class B2:
+    def __init__(self, binary: str | os.PathLike[str]):
+        self.binary = binary
+        line_processor: LineProcessor = default_line_processor
+
+    # def execute(self, args: ProcessArgs):

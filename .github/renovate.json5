@@ -1,0 +1,23 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:base"
+  ],
+  // "--- 1. AUTOMATION SETTINGS ---",
+  automerge: true,
+  platformAutomerge: true,
+  // "--- 2. STRICT SAFETY SETTINGS ---",
+  // "This replaces your cascade script. If a PR is behind main, rebase it immediately.",
+  rebaseWhen: "behind-base-branch",
+  //: "--- 3. NOISE REDUCTION (Optional but Recommended) ---",
+  //: "Group all non-major updates (minor/patch) into one single PR per week.",
+  packageRules: [
+    {
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "groupName": "all non-major dependencies"
+    }
+  ]
+}

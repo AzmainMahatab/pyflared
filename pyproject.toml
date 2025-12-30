@@ -27,6 +27,8 @@ classifiers = [
 dependencies = [
     "cloudflare",
     "aiohttp",
+    "aiostream",
+    "wrapt",
     "typer",
     "platformdirs",
     "rich"

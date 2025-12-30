@@ -1,0 +1,195 @@
+name: Build and publish wheels to TestPyPI (bundled cloudflared)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-linux-windows:
+    name: Build (${{ matrix.os }}, ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            runner: ubuntu-latest
+            arch: amd64
+            asset: cloudflared-linux-amd64
+            exe: cloudflared
+          - os: linux
+            runner: ubuntu-latest
+            arch: arm64
+            asset: cloudflared-linux-arm64
+            exe: cloudflared
+          - os: windows
+            runner: windows-latest
+            arch: amd64
+            asset: cloudflared-windows-amd64.exe
+            exe: cloudflared.exe
+          - os: windows
+            runner: windows-latest
+            arch: arm64
+            asset: cloudflared-windows-arm64.exe
+            exe: cloudflared.exe
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install hatch
+
+      - name: Build wheel (Hatch)
+        run: |
+          hatch build -t wheel
+
+      - name: Install built wheel (no-index)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-index --find-links dist cloudflaredpy
+
+      - name: Record built version
+        id: record_version
+        shell: bash
+        run: |
+          V=$(python -c "import cloudflaredpy; print(cloudflaredpy.__version__)" )
+          echo "version=$V" >> $GITHUB_OUTPUT
+          echo "$V" > version.txt
+
+      - name: Install test dependencies (pytest)
+        run: |
+          python -m pip install pytest
+
+      - name: Run test suite (pytest)
+        run: |
+          pytest -q
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            dist/*.whl
+            version.txt
+
+  build-macos:
+    name: Build (macOS ${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+            tgz: cloudflared-darwin-arm64.tgz
+          - arch: amd64
+            runner: macos-13
+            tgz: cloudflared-darwin-amd64.tgz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install hatch
+
+      - name: Build wheel (Hatch)
+        run: |
+          hatch build -t wheel
+
+      - name: Install built wheel (no-index)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --no-index --find-links dist cloudflaredpy
+
+      - name: Record built version
+        id: record_version
+        shell: bash
+        run: |
+          V=$(python -c "import cloudflaredpy; print(cloudflaredpy.__version__)" )
+          echo "version=$V" >> $GITHUB_OUTPUT
+          echo "$V" > version.txt
+
+      - name: Install test dependencies (pytest)
+        run: |
+          python -m pip install pytest
+
+      - name: Run test suite (pytest)
+        run: |
+          pytest -q
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos-${{ matrix.arch }}
+          path: |
+            dist/*.whl
+            version.txt
+
+  publish:
+    name: Publish to TestPyPI
+    needs: [ build-linux-windows, build-macos ]
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.get_version.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: Display collected files
+        run: |
+          ls -R dist
+      - name: Collect wheels into a flat directory
+        run: |
+          mkdir -p upload
+          find dist -name "*.whl" -print -exec cp {} upload/ \;
+          ls -l upload
+      - name: Determine published version
+        id: get_version
+        shell: bash
+        run: |
+          FILE=$(find dist -name version.txt | head -n1)
+          if [ -z "$FILE" ]; then echo "version.txt not found" >&2; exit 1; fi
+          V=$(cat "$FILE")
+          echo "version=$V" >> $GITHUB_OUTPUT
+          echo "Publishing version: $V"
+      - name: Publish wheels to TestPyPI
+        uses: pypa/gh-action-pypi-publish@v1.12.2
+        with:
+          user: __token__
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: upload
+
+  smoke-test-testpypi:
+    name: Smoke test from TestPyPI
+    needs: publish
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.publish.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install from TestPyPI
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple cloudflaredpy==${{ env.VERSION }}
+      - name: Install test dependencies (pytest)
+        run: |
+          python -m pip install pytest
+      - name: Run test suite against installed package (pytest)
+        run: |
+          pytest -q
