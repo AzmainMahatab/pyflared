@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from enum import StrEnum, auto
 from functools import wraps, partial
 from typing import Callable, Awaitable, Iterable, AsyncGenerator, AsyncIterator, NamedTuple, AsyncIterable, \
-    AsyncContextManager
+    AsyncContextManager, Concatenate
 import aiostream
 from aiostream import await_
 from dill import logger
@@ -25,8 +25,14 @@ class OutputChannel(StrEnum):
 
 
 type Response = bytes | str | None
-
 type Responder = Callable[[bytes, OutputChannel], Response | Awaitable[Response]]
+
+
+def responder_proxy(func: Responder) -> Responder:
+    """Identity decorator to validate signatures."""
+    return func
+
+
 type StreamChunker = Callable[[asyncio.StreamReader, OutputChannel], Response | Awaitable[Response]]
 
 type Guard = Callable[[], bool | Awaitable[bool]]
@@ -45,7 +51,7 @@ type ProcessContext = AsyncContextManager[ProcessHandle]
 
 type CmdTargetable[**P] = Callable[P, CmdArgs]
 type FinalCmdFun[**P] = Callable[P, ProcessContext]
-type FinalCmdFun2[**P] = Callable[P, ProcessContext]
+type FinalCmdFun2[**P] = Callable[Concatenate[list[Responder], P], ProcessContext]
 
 
 class BinaryApp:
@@ -61,14 +67,15 @@ class BinaryApp:
             if not result:
                 raise CommandError(f"Precondition failed: {guard.__name__}")
 
-    def daemon[**P](self, fixed_input: str | None = None,
-                    stream_chunker: StreamChunker | None = None,
-                    guards: list[Guard] = None) -> Callable[
-        [CmdTargetable[P]], FinalCmdFun[P]]:
-        def decorator(func: CmdTargetable[P]) -> FinalCmdFun[P]:
+    def daemon[**P](
+            self, fixed_input: str | None = None,
+            stream_chunker: StreamChunker | None = None,
+            guards: list[Guard] = None) -> Callable[[CmdTargetable[P]], FinalCmdFun2[P]]:
+
+        def decorator(func: CmdTargetable[P]):
             @wraps(func)
             @asynccontextmanager
-            async def wrapper(responder: Responder | None = None, *args: P.args, **kwargs: P.kwargs):
+            async def wrapper(responders: list[Responder] | None = None, *args: P.args, **kwargs: P.kwargs):
 
                 await self._validate_guards(*guards)
 
@@ -85,7 +92,10 @@ class BinaryApp:
                     stdin=asyncio.subprocess.PIPE)
 
                 try:
-                    yield aiter(ProcessHandle(process, responder=responder, chunker=stream_chunker))
+                    ph = ProcessHandle(process, responders=responders, chunker=stream_chunker)
+                    if fixed_input:
+                        await ph.write(fixed_input)
+                    yield aiter(ph)
                 finally:
                     if process.returncode is None:
                         process.stdin.close()
@@ -102,7 +112,7 @@ class BinaryApp:
 
         return decorator
 
-    def instant(self):
+    def instant[**P](self):
         pass
 
 
@@ -121,15 +131,15 @@ class ProcessHandle(AsyncIterable[ProcessOutput]):
 
     def __init__(self, process: asyncio.subprocess.Process,
                  chunker: StreamChunker | None = None,
-                 responder: Responder | None = None):
+                 responders: list[Responder] | None = None):
         self.process = process
         self._chunker = chunker
 
-        if responder:
-            self._responders.append(responder)
+        if responders:
+            self._responders.extend(responders)
 
-    def add_responder(self, responder: Responder):
-        self._responders.append(responder)
+    def add_responder(self, r: Responder):
+        self._responders.append(r)
 
     async def write(self, data: str | bytes):
         """Safe write to stdin"""
@@ -177,14 +187,6 @@ class ProcessHandle(AsyncIterable[ProcessOutput]):
         stream = aiostream.stream.merge(*sources)
         return aiter(stream)
 
-    # async def _chunker(self, stream: asyncio.StreamReader, channel: OutputChannel) -> Response:
-    #     return await stream.readline()
-    def _stream_iterator(self, stream: asyncio.StreamReader) -> AsyncIterator[bytes]:
-        if self._chunker:
-            return
-        else:
-            return stream
-
     async def stdout_only(self) -> AsyncIterator[bytes]:
         """Yields only stdout, but drains stderr."""
         async for output in self:
@@ -212,11 +214,11 @@ def confirm_token() -> bool:
 
 
 @cf.daemon(guards=[confirm_token])
-def x1() -> list[str]:
+def x1(s: int) -> list[str]:
     pass
 
 
-y1 = x1()
+y1 = x1(s=2, respon)
 
 
 # class ProcessHandle(AsyncIterable[ProcessOutput]):
