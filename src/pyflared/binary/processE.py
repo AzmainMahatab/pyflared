@@ -4,15 +4,31 @@ import inspect
 import os
 from asyncio import Task
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from functools import wraps, partial
 from typing import Callable, Awaitable, Iterable, AsyncGenerator, AsyncIterator, NamedTuple, AsyncIterable, \
     AsyncContextManager, Concatenate
+
+import aiofiles
 import aiostream
 from aiostream import await_
 from dill import logger
 
+from pyflared.binary.process5 import ProcessHandle
 from pyflared.binary.trash.B import logger
+
+type InstantFuture[T] = T | Awaitable[T]
+
+
+async def read_from_file(filename: str) -> str:
+    """Reads content from a file asynchronously."""
+    async with aiofiles.open(filename, mode="r") as f:
+        async for line in f:
+            print(line, end="")
+        # You can also use await f.readlines() or iterate line by line
+        content: str = await f.read()
+    return content
 
 
 class CommandError(Exception):
@@ -25,7 +41,8 @@ class OutputChannel(StrEnum):
 
 
 type Response = bytes | str | None
-type Responder = Callable[[bytes, OutputChannel], Response | Awaitable[Response]]
+type Responder = Callable[[bytes, OutputChannel], InstantFuture[Response]]
+type Guard = Callable[[], bool | Awaitable[bool]]
 
 
 def responder_proxy(func: Responder) -> Responder:
@@ -33,9 +50,8 @@ def responder_proxy(func: Responder) -> Responder:
     return func
 
 
-type StreamChunker = Callable[[asyncio.StreamReader, OutputChannel], Response | Awaitable[Response]]
-
-type Guard = Callable[[], bool | Awaitable[bool]]
+type StreamChunker = Callable[
+    [asyncio.StreamReader, OutputChannel], InstantFuture[bytes | None]]  # None means EOF
 
 
 class ProcessOutput(NamedTuple):
@@ -45,13 +61,15 @@ class ProcessOutput(NamedTuple):
 
 
 type CmdArg = str | bytes | os.PathLike[str] | os.PathLike[bytes]
-type CmdArgs = Iterable[CmdArg] | Awaitable[Iterable[CmdArg]]
+type CmdArgs = InstantFuture[Iterable[CmdArg]]
 
-type ProcessContext = AsyncContextManager[ProcessHandle]
+type ProcessContext = AsyncContextManager[ProcessHandle2]
 
 type CmdTargetable[**P] = Callable[P, CmdArgs]
 type FinalCmdFun[**P] = Callable[P, ProcessContext]
-type FinalCmdFun2[**P] = Callable[Concatenate[list[Responder], P], ProcessContext]
+
+
+# type FinalCmdFun2[**P] = Callable[Concatenate[list[Responder], P], ProcessContext]
 
 
 class BinaryApp:
@@ -70,12 +88,13 @@ class BinaryApp:
     def daemon[**P](
             self, fixed_input: str | None = None,
             stream_chunker: StreamChunker | None = None,
-            guards: list[Guard] = None) -> Callable[[CmdTargetable[P]], FinalCmdFun2[P]]:
+            responders: list[Responder] | None = None,
+            guards: list[Guard] = None) -> Callable[[CmdTargetable[P]], FinalCmdFun[P]]:
 
-        def decorator(func: CmdTargetable[P]):
+        def decorator(func: CmdTargetable[P]) -> FinalCmdFun[P]:
             @wraps(func)
             @asynccontextmanager
-            async def wrapper(responders: list[Responder] | None = None, *args: P.args, **kwargs: P.kwargs):
+            async def wrapper(*args: P.args, **kwargs: P.kwargs):
 
                 await self._validate_guards(*guards)
 
@@ -85,6 +104,14 @@ class BinaryApp:
                 else:
                     cmd_args = func(*args, **kwargs)
 
+                ProcessContext2(
+                    binary_path=self.binary_path,
+                    cmd_args=cmd_args,
+                    fixed_input=fixed_input,
+                    responders=responders,
+                    stream_chunker=stream_chunker
+                )
+
                 process = await asyncio.create_subprocess_exec(
                     self.binary_path, *cmd_args,
                     stdout=asyncio.subprocess.PIPE,
@@ -92,10 +119,10 @@ class BinaryApp:
                     stdin=asyncio.subprocess.PIPE)
 
                 try:
-                    ph = ProcessHandle(process, responders=responders, chunker=stream_chunker)
+                    handle = ProcessHandle2(process, responders=responders, chunker=stream_chunker)
                     if fixed_input:
-                        await ph.write(fixed_input)
-                    yield aiter(ph)
+                        await handle.write(fixed_input)
+                    yield aiter(handle)
                 finally:
                     if process.returncode is None:
                         process.stdin.close()
@@ -126,20 +153,15 @@ async def _stream_iterator(
             break
 
 
-class ProcessHandle(AsyncIterable[ProcessOutput]):
-    _responders: list[Responder] = []
+@dataclass
+class ProcessHandle2(AsyncIterable[ProcessOutput]):
+    process: asyncio.subprocess.Process
+    chunker: StreamChunker | None = None
+    out_filter: ProcessOutputFilter | None = None
+    responders: list[Responder] | None = None
 
-    def __init__(self, process: asyncio.subprocess.Process,
-                 chunker: StreamChunker | None = None,
-                 responders: list[Responder] | None = None):
-        self.process = process
-        self._chunker = chunker
-
-        if responders:
-            self._responders.extend(responders)
-
-    def add_responder(self, r: Responder):
-        self._responders.append(r)
+    # def add_responder(self, responder: Responder):
+    #     self.responders.append(responder)
 
     async def write(self, data: str | bytes):
         """Safe write to stdin"""
@@ -155,16 +177,30 @@ class ProcessHandle(AsyncIterable[ProcessOutput]):
             pass  # Process might have closed already
 
     def __aiter__(self) -> AsyncIterator[ProcessOutput]:
+        if fr := self.out_filter:
+            return self.filterator(fr)
+        else:
+            return self.mixed_stream()
+
+    async def filterator(self, fr: ProcessOutputFilter) -> AsyncIterator[ProcessOutput]:
+        async for output in self.mixed_stream():
+            if filtered := fr(output):
+                yield filtered
+
+    async def write_from_responders(self, chunk: bytes, channel: OutputChannel, responders: Iterable[Responder]):
+        for responder in responders:
+            response = responder(chunk, channel)
+            if inspect.isawaitable(response):
+                response = await response
+            if response is not None:
+                await self.write(response)
+
+    def mixed_stream(self) -> AsyncIterator[ProcessOutput]:
         """Yields both stdout and stderr mixed."""
 
         def channel_tagger(channel: OutputChannel) -> Callable[[bytes], Awaitable[ProcessOutput] | ProcessOutput]:
             async def transformer(chunk: bytes) -> ProcessOutput:
-                for responder in self._responders:
-                    response = responder(chunk, channel)
-                    if inspect.isawaitable(response):
-                        response = await response
-                    if response is not None:
-                        await self.write(response)
+                await self.write_from_responders(chunk, channel, self.responders)
                 return ProcessOutput(chunk, channel)
 
             return transformer
@@ -173,13 +209,13 @@ class ProcessHandle(AsyncIterable[ProcessOutput]):
 
         if self.process.stdout:
             sout = _stream_iterator(self.process.stdout, OutputChannel.STDOUT,
-                                    self._chunker) if self._chunker else self.process.stdout
+                                    self.chunker) if self.chunker else self.process.stdout
             tagged_stdout = aiostream.pipe.map(sout, channel_tagger(OutputChannel.STDOUT))
             sources.append(tagged_stdout)
 
         if self.process.stderr:
             serr = _stream_iterator(self.process.stderr, OutputChannel.STDERR,
-                                    self._chunker) if self._chunker else self.process.stderr
+                                    self.chunker) if self.chunker else self.process.stderr
 
             tagged_stderr = aiostream.pipe.map(serr, channel_tagger(OutputChannel.STDERR))
             sources.append(tagged_stderr)
@@ -206,6 +242,57 @@ class ProcessHandle(AsyncIterable[ProcessOutput]):
         await self.process.wait()
 
 
+@dataclass
+class ProcessContext2(AsyncContextManager[ProcessHandle2]):
+    binary_path: str
+    cmd_args: list[str]
+    fixed_input: str | None = None
+    # responder: Responder | None = None
+    stream_chunker: StreamChunker | None = None
+    process: asyncio.subprocess.Process | None = None
+    responders: list[Responder] | None = None
+
+    # def __init__(self, process: asyncio.subprocess.Process, args: list[str], fixed_input: str | None = None,
+    #              responders: list[Responder] | None = None, stream_chunker: StreamChunker | None = None):
+    #     self.process = process
+    #     self.fixed_input = fixed_input
+
+    async def __aenter__(self) -> ProcessHandle2:
+        process = await asyncio.create_subprocess_exec(
+            self.binary_path, *self.cmd_args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.PIPE)
+
+        process_handle = ProcessHandle2(process, chunker=self.stream_chunker, responders=self.responders)
+        if self.fixed_input:
+            await process_handle.write(self.fixed_input)
+
+        return process_handle
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        if not (process := self.process) or process.returncode is not None:  # process.returncode None if still running
+            return
+
+        process.stdin.close()
+        logger.info("Terminating process...")
+        process.terminate()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            logger.info("Force killing process...")
+            process.kill()
+            await process.wait()
+
+    async def start_background(self, responders: Iterable[Responder] | None = None) -> int | None:
+        async with self as service:
+            async for event in service:
+                if responders:
+                    await service.write_from_responders(event.data, event.channel, responders)
+                event.log()
+            return service.process.returncode
+
+
 cf = BinaryApp("cf")
 
 
@@ -218,7 +305,25 @@ def x1(s: int) -> list[str]:
     pass
 
 
-y1 = x1(s=2, respon)
+y1 = x1(s=2, )
+
+
+def f2(x: int) -> int:
+    return x + 1
+
+
+def f3(x: int) -> int:
+    return x + 2
+
+
+ProcessOutputFilter = Callable[[ProcessOutput], ProcessOutput | None]
+
+
+async def filterator(ph: ProcessHandle2, pf: ProcessOutputFilter):
+    async for output in ph:
+        filtered = pf(output)
+        if filtered:
+            yield filtered
 
 
 # class ProcessHandle(AsyncIterable[ProcessOutput]):
