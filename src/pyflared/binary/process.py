@@ -7,11 +7,9 @@ from collections.abc import AsyncIterator
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, Awaitable, Self
+from typing import Callable, Awaitable
 
-from pydantic import BaseModel
-
-from pyflared.typealias import ProcessArgs
+from pyflared.types import ProcessArgs
 
 logger = logging.getLogger(__name__)
 

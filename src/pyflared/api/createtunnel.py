@@ -7,7 +7,7 @@ from cloudflare.types.dns import record_batch_params
 from pydantic import BaseModel, SecretStr
 
 from pyflared import consts
-from pyflared.typealias import Domain
+from pyflared.types import Domain
 
 
 class CreatedTunnel(BaseModel):

@@ -13,7 +13,7 @@ from pydantic import SecretStr
 
 from pyflared import consts
 from pyflared.api.createtunnel import CreatedTunnel, create_tunnel
-from pyflared.typealias import ZoneNameDict, Domain, ZoneId, ZoneNames, Mappings, TunnelIds, CreationRecords
+from pyflared.types import ZoneNameDict, Domain, ZoneId, ZoneNames, Mappings, TunnelIds, CreationRecords
 
 
 def auto_tunnel_name() -> str:

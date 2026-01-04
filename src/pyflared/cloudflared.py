@@ -3,16 +3,17 @@ import os
 import pathlib
 import stat
 from contextlib import ExitStack
-from functools import cache
+from functools import cache, wraps
 from importlib.resources import files, as_file
 from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Iterable, Callable
 
 from pyflared.binary.binary import BinaryWrapper
 from pyflared.binary.process import ProcessContext
+from pyflared.binary.processE import BinaryApp
 from pyflared.tunnel import TunnelManager
-from pyflared.typealias import Mappings, ProcessArgs
+from pyflared.types import Mappings, ProcessArgs
 
 __all__ = ["cloudflared_binary", "run_token_tunnel", "run_quick_tunnel", "version"]
 
@@ -106,8 +107,48 @@ def run_dns_fixed_tunnel(mappings: Mappings, api_token: str | None = None):
     return cloudflared_binary.execute_streaming_response_from_async(tunnel_token_cmd)
 
 
-async def version():
-    result = await cloudflared_binary.execute_await_response("version")
-    if result.return_code != 0:
-        raise ValueError("Version not found")
-    return result.stdout
+# async def version():
+#     result = await cloudflared_binary.execute_await_response("version")
+#     if result.return_code != 0:
+#         raise ValueError("Version not found")
+#     return result.stdout
+
+
+cloudflayred = BinaryApp(get_path())
+
+
+def confirm_token() -> bool:
+    return True
+
+
+# @cloudflayred.instant()
+# async def version(): return "version"
+
+@cloudflayred.instant()
+async def version(): return "version"
+
+
+# @cloudflayred.instant()
+# async def version2(): return object
+
+
+@cloudflayred.daemon()
+def run_quick_tunnel2(service: str):
+    return *quick_tunnel_cmd, service
+
+# def require_string_return[**P, T: str](func: Callable[P, T]) -> Callable[P, T]:
+#     @wraps(func)
+#     def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+#         return func(*args, **kwargs)
+#     return wrapper
+#
+# # --- Test ---
+#
+# @require_string_return
+# def good_func() -> str:
+#     return "ok"
+#
+# # ❌ TYPE ERROR: Type 'int' cannot be assigned to type variable 'T' bound to 'str'.
+# @require_string_return
+# def bad_func(a: int, b: int) -> int:
+#     return a + b

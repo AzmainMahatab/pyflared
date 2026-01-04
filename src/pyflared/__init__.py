@@ -6,3 +6,7 @@ warnings.filterwarnings(
     category=UserWarning,
     module="cloudflare._compat",
 )
+
+
+def f1():
+    pass

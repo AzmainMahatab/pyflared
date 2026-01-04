@@ -12,7 +12,7 @@ from typing import Callable, Awaitable, Self
 
 from pydantic import BaseModel
 
-from pyflared.typealias import ProcessArgs
+from pyflared.types import ProcessArgs
 
 logger = logging.getLogger(__name__)
 

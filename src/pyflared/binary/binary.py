@@ -3,7 +3,7 @@ import os
 from dataclasses import dataclass
 
 from pyflared.binary.process import ProcessContext, ProcessData, AsyncCmd, LineProcessor, default_line_processor
-from pyflared.typealias import ProcessArgs
+from pyflared.types import ProcessArgs
 
 
 @dataclass(frozen=True)
