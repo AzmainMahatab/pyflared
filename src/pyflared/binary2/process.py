@@ -9,7 +9,7 @@ import aiostream
 from beartype.door import die_if_unbearable
 
 from pyflared.binary.context import Mutator
-from pyflared.types import OutputChannel, StreamChunker, ProcessOutputFilter, Responder, CmdArg, CmdArgs, Guard, \
+from pyflared.types import OutputChannel, StreamChunker, Responder, CmdArg, CmdArgs, Guard, \
     ProcessOutput, AwaitableMaybe, ChunkSignal, CommandError
 from pyflared.utils.async_helper import safe_awaiter
 
@@ -22,11 +22,10 @@ class RunningProcess(AsyncIterable[ProcessOutput]):
     A safe, active handle to a running process.
     """
     process: asyncio.subprocess.Process
-    mixed_stream: AsyncIterator[ProcessOutput]
-    selector: ProcessOutputFilter | None = None
+    process_streams: AsyncIterator[ProcessOutput]
 
     def __aiter__(self) -> AsyncIterator[ProcessOutput]:
-        return self.mixed_stream
+        return self.process_streams
 
     async def write(self, data: AwaitableMaybe[str | bytes]) -> None:
         """write to stdin."""
@@ -98,6 +97,15 @@ class ProcessExecutor(AsyncContextManager[RunningProcess]):
     process: asyncio.subprocess.Process | None = None
     stack: contextlib.AsyncExitStack = field(default_factory=contextlib.AsyncExitStack, init=False)
 
+    @classmethod
+    async def _validate_guards(cls, guards: Iterable[Guard]):
+        for guard in guards:
+            result = guard()
+            if inspect.isawaitable(result):
+                result = await result
+            if not result:
+                raise CommandError(f"Precondition failed: {guard.__name__}")
+
     async def __aenter__(self) -> RunningProcess:
         # 1. Prepare Arguments
         args = await safe_awaiter(self.cmd_args)
@@ -130,7 +138,7 @@ class ProcessExecutor(AsyncContextManager[RunningProcess]):
         # 6. Create the Handle
         handle = RunningProcess(
             process=self.process,
-            mixed_stream=active_iterator
+            process_streams=active_iterator
         )
 
         # 7. Initial Write (if any)
@@ -155,29 +163,6 @@ class ProcessExecutor(AsyncContextManager[RunningProcess]):
                 self.process.kill()
                 await self.process.wait()
 
-    @classmethod
-    async def _validate_guards(cls, guards: Iterable[Guard]):
-        for guard in guards:
-            result = guard()
-            if inspect.isawaitable(result):
-                result = await result
-            if not result:
-                raise CommandError(f"Precondition failed: {guard.__name__}")
-
-    @classmethod
-    async def _stream_iterator2(
-            cls, stream: asyncio.StreamReader, output_channel: OutputChannel,
-            stream_chunker: StreamChunker) -> AsyncIterator[bytes]:
-        while True:
-            chunk = await safe_awaiter(stream_chunker(stream, output_channel))
-            match chunk:
-                case bytes():
-                    yield chunk
-                case ChunkSignal.SKIP:
-                    continue
-                case ChunkSignal.EOF:
-                    break
-
     async def _process_responders(self, process: asyncio.subprocess.Process, chunk: bytes, channel: OutputChannel):
         """Runs all responders and writes back to stdin if they reply."""
         if not self.responders or not process.stdin:
@@ -201,47 +186,55 @@ class ProcessExecutor(AsyncContextManager[RunningProcess]):
         """Constructs the aiostream graph without starting it."""
         sources: list[aiostream.core.Stream] = []
 
+        def channel_tagger(process: asyncio.subprocess.Process, channel: OutputChannel) -> Callable[
+            [bytes], AwaitableMaybe[ProcessOutput]]:
+            """Creates the mapping function that converts bytes to ProcessOutput."""
+
+            async def transformer(chunk: bytes) -> ProcessOutput:
+                # If we have responders, we process them here "side-effect style"
+                if self.responders:
+                    await self._process_responders(process, chunk, channel)
+
+                return ProcessOutput(chunk, channel)
+
+            return transformer
+
+        async def reader_chunker(
+                stream: asyncio.StreamReader, output_channel: OutputChannel,
+                chunker: StreamChunker) -> AsyncIterator[bytes]:
+            while True:
+                chunk = await safe_awaiter(chunker(stream, output_channel))
+                match chunk:
+                    case bytes():
+                        yield chunk
+                    case ChunkSignal.SKIP:
+                        continue
+                    case ChunkSignal.EOF:
+                        break
+
         # Helper to attach responders/transformers to a raw stream
-        def attach_channel_logic(raw_stream: asyncio.StreamReader, channel: OutputChannel) -> aiostream.core.Stream:
+        def attach_channel(raw_stream: asyncio.StreamReader, channel: OutputChannel) -> aiostream.core.Stream:
             # 1. Chunking (if needed) - assuming _stream_iterator applies chunking
             # If _stream_iterator returns an AsyncIterator, aiostream accepts it.
             if self.chunker:
-                source = self._stream_iterator2(raw_stream, channel, self.chunker)
+                source = reader_chunker(raw_stream, channel, self.chunker)
             else:
                 source = raw_stream
 
             # 2. Map: Convert bytes -> ProcessOutput AND handle responders
             # We use 'async_map' because we might need to await responders
-            return aiostream.stream.map(source, self._make_transformer(process, channel))
+            return aiostream.stream.map(source, channel_tagger(process, channel))
 
         if process.stdout:
-            sources.append(attach_channel_logic(process.stdout, OutputChannel.STDOUT))
+            sources.append(attach_channel(process.stdout, OutputChannel.STDOUT))
 
         if process.stderr:
-            sources.append(attach_channel_logic(process.stderr, OutputChannel.STDERR))
+            sources.append(attach_channel(process.stderr, OutputChannel.STDERR))
 
         # 3. Merge streams
         merged = aiostream.stream.merge(*sources)
 
-        # 4. Filter (if configured)
-        # Applying filter at the stream level is more efficient than in the loop
-        # if self.out_filter:
-        #     merged = aiostream.stream.filter(merged, self.out_filter)
-
         return merged
-
-    def _make_transformer(self, process: asyncio.subprocess.Process, channel: OutputChannel) -> Callable[
-        [bytes], AwaitableMaybe[ProcessOutput]]:
-        """Creates the mapping function that converts bytes to ProcessOutput."""
-
-        async def transformer(chunk: bytes) -> ProcessOutput:
-            # If we have responders, we process them here "side-effect style"
-            if self.responders:
-                await self._process_responders(process, chunk, channel)
-
-            return ProcessOutput(chunk, channel)
-
-        return transformer
 
     async def start_background(self, responders: Iterable[Responder] | None = None) -> int | None:
         async with self as service:
