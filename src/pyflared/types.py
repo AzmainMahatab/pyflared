@@ -4,7 +4,6 @@ import os
 from collections import defaultdict
 from collections.abc import Iterable, Awaitable
 from enum import StrEnum, auto
-from typing import Any
 from typing import NamedTuple, Callable
 
 from cloudflare.types.dns import record_batch_params
@@ -14,18 +13,33 @@ type AwaitableMaybe[T] = T | Awaitable[T]
 
 type Domain = str
 type Service = str
-type Mappings = dict[Domain, Service]
 type ProcessArgs = tuple[str, ...]
 
 type ZoneId = str
 type ZoneName = str
-type ZoneNames = set[ZoneName]
-type ZoneNameDict = dict[ZoneName, Zone]
+
+
+class ZoneNames(set[ZoneName]):
+    pass
+
+
+class Mappings(dict[Domain, Service]):
+    pass
+
+
+class ZoneNameDict(dict[ZoneName, Zone]):
+    pass
+
 
 type TunnelId = str
-type TunnelIds = set[TunnelId]
 
-type CreationRecords = defaultdict[ZoneId, list[record_batch_params.CNAMERecordParam]]
+
+class TunnelIds(set[TunnelId]):
+    pass
+
+
+class CreationRecords(defaultdict[ZoneId, list[record_batch_params.CNAMERecordParam]]):
+    pass
 
 
 class CommandError(Exception):
