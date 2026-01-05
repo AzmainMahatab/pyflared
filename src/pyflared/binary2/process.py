@@ -17,6 +17,64 @@ from pyflared.utils.async_helper import safe_awaiter
 logger = logging.getLogger(__name__)
 
 
+@dataclass()
+class POper(AsyncIterable[ProcessOutput]):
+    process: asyncio.subprocess.Process
+    merged_iterable: AsyncIterable[ProcessOutput]
+
+    def __aiter__(self):
+        return self.merged_iterable
+
+    async def stdout_only(self) -> AsyncIterator[bytes]:
+        """Yields only stdout, but drains stderr."""
+        async for output in self:
+            if output.channel == OutputChannel.STDOUT:
+                yield output.data
+
+    async def stderr_only(self) -> AsyncIterator[bytes]:
+        """Yields only stderr, but drains stdout."""
+        async for output in self:
+            if output.channel == OutputChannel.STDERR:
+                yield output.data
+
+    async def write(self, data: AwaitableMaybe[str | bytes]) -> None:
+        """write to stdin."""
+        if not self.process.stdin:
+            return
+        try:
+            data = await safe_awaiter(data)
+            self.process.stdin.write(data)
+            await self.process.stdin.drain()
+        except BrokenPipeError:
+            pass
+
+    async def write_line(self, data: AwaitableMaybe[str]):
+        await self.write(data + "\n")
+
+    async def write_from_responders(self, chunk: bytes, channel: OutputChannel, responders: Iterable[Responder]):
+        for responder in responders:
+            response = await safe_awaiter(responder(chunk, channel))
+            if response is not None:
+                await self.write(response)
+
+    async def pipe_to(self, target: RunningProcess, mutator: Mutator | None = None) -> None:
+        async for output in self:
+            if mutator:
+                await target.write(mutator(output))
+            elif output.channel == OutputChannel.STDOUT:
+                await target.write(output.data)
+
+    async def drain_wait(self) -> int:
+        """Drains all output until the process completes."""
+        async for _ in self:
+            pass
+        return await self.process.wait()
+
+    @property
+    def returncode(self) -> int | None:
+        return self.process.returncode
+
+
 class ProcessInstance(AsyncIterable[ProcessOutput], Protocol):
 
     async def stdout_only(self) -> AsyncIterator[bytes]:
@@ -175,8 +233,6 @@ class RunningProcess(ProcessInstance):
             except asyncio.TimeoutError:
                 self.process.kill()
                 await self.process.wait()
-
-
 
 
 @dataclass
