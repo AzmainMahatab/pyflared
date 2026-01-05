@@ -24,7 +24,7 @@ def quick_tunnel(
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
 ):
     """Cloudflared QuickTunnels without domains."""
-    tunnel_process = pyflared.cloudflared.run_quick_tunnel(service)  # TODO: Fix it! we cannot run in bg and end
+    tunnel_process = pyflared.cloudflared.run_quick_tunnel2(service)  # TODO: Fix it! we cannot run in bg and end
     asyncio.run(tunnel_process.start_background())
 
 

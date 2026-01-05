@@ -3,10 +3,10 @@ import inspect
 import logging
 from dataclasses import dataclass
 from typing import Callable, Iterable, AsyncIterator, AsyncIterable, AsyncContextManager
-from rich.pretty import pretty_repr
-from beartype.door import die_if_unbearable
 
 import aiostream
+from beartype.door import die_if_unbearable
+from rich.pretty import pretty_repr
 
 from pyflared.types import ProcessOutput, ProcessOutputFilter, Responder, OutputChannel, Guard, CmdArg, CmdArgs, \
     StreamChunker, CommandError, AwaitableMaybe
@@ -16,6 +16,7 @@ type ProcessContext = AsyncContextManager[ProcessHandle2]
 type FinalCmdFun[**P] = Callable[P, ProcessContext2]
 
 type Converter[R] = Callable[[ProcessContext2], R]
+type Mutator = Callable[[ProcessOutput], AwaitableMaybe[bytes]]
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,6 @@ async def _stream_iterator(
             yield chunk
         else:  # End of stream
             break
-
-
-type Mutator = Callable[[ProcessOutput], AwaitableMaybe[bytes]]
 
 
 # async def mutate(source: AsyncIterator[ProcessOutput],) -> AsyncIterator[ProcessOutput]:

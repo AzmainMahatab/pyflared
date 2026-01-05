@@ -2,7 +2,7 @@ import logging
 from functools import wraps
 from typing import Callable, Awaitable, overload
 
-from pyflared.binary.context import ProcessContext2, FinalCmdFun, gather_stdout
+from pyflared.binary5.process import ProcessContext, FinalCmdFun
 from pyflared.types import Guard, CmdArg, Responder, StreamChunker, CmdTargetable
 
 logger = logging.getLogger(__name__)
@@ -21,16 +21,17 @@ class BinaryApp:
         self.binary_path = binary_path
 
     def daemon[**P](
-            self, fixed_input: str | None = None,
-            stream_chunker: StreamChunker | None = None,
+            self, guards: list[Guard] | None = None,
+            stream_chunker: StreamChunker | None = None,  # This is also a good place to add logger if needed
+            fixed_input: str | None = None,
             responders: list[Responder] | None = None,
-            guards: list[Guard] | None = None) -> Callable[[CmdTargetable[P]], FinalCmdFun[P]]:
+    ) -> Callable[[CmdTargetable[P]], FinalCmdFun[P]]:
         def decorator(func: CmdTargetable[P]) -> FinalCmdFun[P]:
             @wraps(func)
-            def wrapper(*args: P.args, **kwargs: P.kwargs) -> ProcessContext2:
+            def wrapper(*args: P.args, **kwargs: P.kwargs) -> ProcessContext:
                 cmd_args = func(*args, **kwargs)
 
-                process_context = ProcessContext2(
+                process_context = ProcessContext(
                     binary_path=self.binary_path,
                     cmd_args=cmd_args,
                     stream_chunker=stream_chunker,
@@ -57,7 +58,7 @@ class BinaryApp:
     @overload
     def instant[**P, R](
             self,
-            converter: Callable[[ProcessContext2], Awaitable[R]],
+            converter: Callable[[ProcessContext], Awaitable[R]],
             fixed_input: str | None = None,
             stream_chunker: StreamChunker | None = None,
             responders: list[Responder] | None = None,
@@ -67,13 +68,13 @@ class BinaryApp:
 
     def instant[**P, R](
             self,
-            converter: Callable[[ProcessContext2], Awaitable[R]] | None = None,  # Type as Optional internally
+            converter: Callable[[ProcessContext], Awaitable[R]] | None = None,
             fixed_input: str | None = None,
             stream_chunker: StreamChunker | None = None,
             responders: list[Responder] | None = None,
             guards: list[Guard] | None = None,
     ) -> Callable[[CmdTargetable[P]], Callable[P, Awaitable[R | str]]]:
-        actual_converter = converter if converter is not None else gather_stdout
+        actual_converter = converter if converter is not None else self.concatenate_stdout
 
         """
         Decorates a function to produce a ProcessContext2 via self.daemon,
@@ -103,6 +104,14 @@ class BinaryApp:
             return wrapper
 
         return decorator
+
+    @classmethod
+    async def concatenate_stdout(cls, process_context: ProcessContext) -> str:
+        async with process_context as handle:
+            output_chunks: list[bytes] = []
+            async for chunk in handle:
+                output_chunks.append(chunk.data)
+            return b"".join(output_chunks).decode()  # type: ignore
 
 # cf = BinaryApp("cf")
 #

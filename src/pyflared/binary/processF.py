@@ -2,7 +2,7 @@ import inspect
 
 import wrapt
 
-from pyflared.binary.processE import Guard, CommandError
+from pyflared.binary.decorator import Guard, CommandError
 
 
 class BinaryApp:

@@ -1,19 +1,21 @@
+import asyncio
 import atexit
 import os
 import pathlib
+import re
 import stat
 from contextlib import ExitStack
-from functools import cache, wraps
+from functools import cache
 from importlib.resources import files, as_file
 from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import Iterator, Iterable, Callable
+from typing import Iterator
 
 from pyflared.binary.binary import BinaryWrapper
+from pyflared.binary.decorator import BinaryApp
 from pyflared.binary.process import ProcessContext
-from pyflared.binary.processE import BinaryApp
 from pyflared.tunnel import TunnelManager
-from pyflared.types import Mappings, ProcessArgs
+from pyflared.types import Mappings, ProcessArgs, ChunkR, ChunkSignal, OutputChannel
 
 __all__ = ["cloudflared_binary", "run_token_tunnel", "run_quick_tunnel", "version"]
 
@@ -92,10 +94,6 @@ def run_token_tunnel(token: str) -> ProcessContext:
     return cloudflared_binary.execute_streaming_response(*token_tunnel_cmd, token)
 
 
-def run_quick_tunnel(service: str):
-    return cloudflared_binary.execute_streaming_response(*quick_tunnel_cmd, service)
-
-
 def run_dns_fixed_tunnel(mappings: Mappings, api_token: str | None = None):
     async def tunnel_token_cmd() -> ProcessArgs:
         tunnel_manager = TunnelManager(api_token)
@@ -117,24 +115,39 @@ def run_dns_fixed_tunnel(mappings: Mappings, api_token: str | None = None):
 cloudflayred = BinaryApp(get_path())
 
 
-def confirm_token() -> bool:
-    return True
 
-
-# @cloudflayred.instant()
-# async def version(): return "version"
 
 @cloudflayred.instant()
 async def version(): return "version"
 
 
-# @cloudflayred.instant()
-# async def version2(): return object
+quickflare_url_pattern: re.Pattern[bytes] = re.compile(rb'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)')
 
 
-@cloudflayred.daemon()
-def run_quick_tunnel2(service: str):
+async def filter_trycloudflare_url(stream_reader: asyncio.StreamReader, output_channel: OutputChannel) -> ChunkR:
+    line_data = await stream_reader.readline()
+    if match := quickflare_url_pattern.search(line_data):
+        return match.group(1)
+    return ChunkSignal.SKIP
+
+
+@cloudflayred.daemon(stream_chunker=filter_trycloudflare_url)
+def run_quick_tunnel(service: str):
     return *quick_tunnel_cmd, service
+
+
+def confirm_token() -> bool:
+    return True
+
+def run_dns_fixed_tunnel2(mappings: Mappings, api_token: str | None = None):
+    async def tunnel_token_cmd() -> ProcessArgs:
+        tunnel_manager = TunnelManager(api_token)
+        await tunnel_manager.remove_orphans()
+        tunnel_token = await tunnel_manager.fixed_dns_tunnel(mappings)
+        cmd = token_tunnel_cmd + (tunnel_token.__str__(),)
+        return cmd
+
+    return cloudflared_binary.execute_streaming_response_from_async(tunnel_token_cmd)
 
 # def require_string_return[**P, T: str](func: Callable[P, T]) -> Callable[P, T]:
 #     @wraps(func)

@@ -17,6 +17,88 @@ from pyflared.utils.async_helper import safe_awaiter
 logger = logging.getLogger(__name__)
 
 
+@dataclass
+class ProcessWriter:
+    process: asyncio.subprocess.Process
+
+    async def write(self, data: AwaitableMaybe[str | bytes]) -> None:
+        """write to stdin."""
+        if not self.process.stdin:
+            return
+        try:
+            data = await safe_awaiter(data)
+            self.process.stdin.write(data)
+            await self.process.stdin.drain()
+        except BrokenPipeError:
+            pass
+
+    async def write_line(self, data: AwaitableMaybe[str]):
+        await self.write(data + "\n")
+
+    async def write_from_responders(self, chunk: bytes, channel: OutputChannel, responders: Iterable[Responder]):
+        for responder in responders:
+            response = await safe_awaiter(responder(chunk, channel))
+            if response is not None:
+                await self.write(response)
+
+
+@dataclass
+class StreamMaker(ProcessWriter):
+
+    def _build_pipeline(self) -> aiostream.core.Stream:
+        """Constructs the aiostream graph without starting it."""
+        sources: list[aiostream.core.Stream] = []
+
+        def channel_tagger(channel: OutputChannel) -> Callable[
+            [bytes], AwaitableMaybe[ProcessOutput]]:
+            """Creates the mapping function that converts bytes to ProcessOutput."""
+
+            async def transformer(chunk: bytes) -> ProcessOutput:
+                if self.responders:
+                    await self.write_from_responders(chunk, channel, self.responders)
+
+                return ProcessOutput(chunk, channel)
+
+            return transformer
+
+        async def reader_chunker(
+                stream: asyncio.StreamReader, output_channel: OutputChannel,
+                chunker: StreamChunker) -> AsyncIterator[bytes]:
+            while True:
+                chunk = await safe_awaiter(chunker(stream, output_channel))
+                match chunk:
+                    case bytes():
+                        yield chunk
+                    case ChunkSignal.SKIP:
+                        continue
+                    case ChunkSignal.EOF:
+                        break
+
+        # Helper to attach responders/transformers to a raw stream
+        def attach_channel(raw_stream: asyncio.StreamReader, channel: OutputChannel) -> aiostream.core.Stream:
+            # 1. Chunking (if needed) - assuming _stream_iterator applies chunking
+            # If _stream_iterator returns an AsyncIterator, aiostream accepts it.
+            if self.chunker:
+                source = reader_chunker(raw_stream, channel, self.chunker)
+            else:
+                source = raw_stream
+
+            # 2. Map: Convert bytes -> ProcessOutput AND handle responders
+            # We use 'async_map' because we might need to await responders
+            return aiostream.stream.map(source, channel_tagger(channel))
+
+        if self.process.stdout:
+            sources.append(attach_channel(self.process.stdout, OutputChannel.STDOUT))
+
+        if self.process.stderr:
+            sources.append(attach_channel(self.process.stderr, OutputChannel.STDERR))
+
+        # 3. Merge streams
+        merged = aiostream.stream.merge(*sources)
+
+        return merged
+
+
 @dataclass()
 class POper(AsyncIterable[ProcessOutput]):
     process: asyncio.subprocess.Process
