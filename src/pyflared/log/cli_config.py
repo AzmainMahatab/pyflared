@@ -1,7 +1,8 @@
 from pathlib import Path
 
-from pyflared.log.logging_type import LoggingConfig
 from platformdirs import user_log_dir
+
+from pyflared.log.logging_type import LoggingConfig
 
 APP_NAME = "pyflared"
 AUTHOR = "Azmain"
@@ -46,3 +47,4 @@ CONFIG: LoggingConfig = {
         }
     }
 }
+

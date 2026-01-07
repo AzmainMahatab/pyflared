@@ -32,7 +32,7 @@ dependencies = [
     "typer",
     "platformdirs",
     "rich",
-    "beartype>=0.22.9",
+    "beartype",
 ]
 
 [project.urls]

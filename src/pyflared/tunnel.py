@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import socket
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -13,7 +14,9 @@ from pydantic import SecretStr
 
 from pyflared import consts
 from pyflared.api.createtunnel import CreatedTunnel, create_tunnel
-from pyflared.types import ZoneNameDict, Domain, ZoneId, ZoneNames, Mappings, TunnelIds, CreationRecords
+from pyflared.shared.types import ZoneNameDict, Domain, ZoneId, ZoneNames, Mappings, TunnelIds, CreationRecords
+
+logger = logging.getLogger(__name__)
 
 
 def auto_tunnel_name() -> str:

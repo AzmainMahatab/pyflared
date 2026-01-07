@@ -1,12 +1,27 @@
 import asyncio
+import logging
 
 import typer
 
 import pyflared.cloudflared
+from pyflared.log.config import contextual_logger
+from pyflared.shared.types import Mappings, OutputChannel
 
 app = typer.Typer(help="MyCLI Tool")
 tunnels_app = typer.Typer(help="Manage tunnels")
 app.add_typer(tunnels_app, name="tunnel")  # tool tunnel
+
+
+# def fx(record: logging.LogRecord):
+#     return True
+#
+#
+# def fx2(record: int):
+#     return True
+
+
+# console_handler.addFilter(fx2)
+# cl = ContextualLogger(console_handler)
 
 
 @app.command()
@@ -24,8 +39,9 @@ def quick_tunnel(
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
 ):
     """Cloudflared QuickTunnels without domains."""
-    tunnel_process = pyflared.cloudflared.run_quick_tunnel2(service)  # TODO: Fix it! we cannot run in bg and end
-    asyncio.run(tunnel_process.start_background())
+    tunnel_process = pyflared.cloudflared.run_quick_tunnel(service)  # TODO: Fix it! we cannot run in bg and end
+    with contextual_logger(logging.DEBUG if verbose else logging.INFO):
+        asyncio.run(tunnel_process.start_background([print_all]))
 
 
 def parse_pair(value: str) -> tuple[str, str]:
@@ -36,9 +52,15 @@ def parse_pair(value: str) -> tuple[str, str]:
     return domain, service
 
 
+def print_all(b: bytes, c: OutputChannel):
+    # print(b.decode(), end="")
+    print(b.decode())
+
+
 @tunnels_app.command("mapped")
 def mapped_tunnel(
         pair_args: list[str],
+        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs"),
         api_token: str | None = typer.Option(
             None,
             help="Your secret API key.",  # Todo: specify token needed permission
@@ -50,7 +72,9 @@ def mapped_tunnel(
         # Securely prompt the user (hide input)
         api_token = typer.prompt("Please enter your API Key", hide_input=True)
 
-    pair_dict = dict(parse_pair(p) for p in pair_args)
+    pair_dict = Mappings(parse_pair(p) for p in pair_args)
 
     tunnel = pyflared.cloudflared.run_dns_fixed_tunnel(pair_dict, api_token)
-    asyncio.run(tunnel.start_background())
+
+    with contextual_logger(logging.DEBUG if verbose else logging.INFO):
+        asyncio.run(tunnel.start_background([print_all]))

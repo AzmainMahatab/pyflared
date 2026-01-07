@@ -1,41 +1,34 @@
 import asyncio
 import atexit
+import logging
 import os
 import pathlib
 import re
 import stat
 from contextlib import ExitStack
-from functools import cache
+from functools import cache, cached_property
 from importlib.resources import files, as_file
 from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Iterator
 
-from pyflared.binary.binary import BinaryWrapper
-from pyflared.binary.decorator import BinaryApp
-from pyflared.binary.process import ProcessContext
+from pyflared.binary.binary_decorator import BinaryApp
+from pyflared.shared.types import Mappings, ChunkR, ChunkSignal, OutputChannel
 from pyflared.tunnel import TunnelManager
-from pyflared.types import Mappings, ProcessArgs, ChunkR, ChunkSignal, OutputChannel
 
-__all__ = ["cloudflared_binary", "run_token_tunnel", "run_quick_tunnel", "version"]
+__all__ = ["run_token_tunnel", "run_quick_tunnel", "version"]
+
+logger = logging.getLogger(__name__)
 
 
-# class CloudflareBinary(_BinaryWrapper):
-#     def __init__(self):
-#         super().__init__(get_path())
-# def tunnel(token: str):
-#     return _ServiceContext(get_path(), "tunnel", "run", "--token", token)
-
-@cache
+@cached_property
 def _bin_dir():
     # Bin directory lives inside the installed package
     return Path(__file__).resolve().parent / "bin"
     # return files('myapp.templates')
 
 
-@cache
-def _binary_filename() -> str:
-    return "cloudflared" + ".exe" if os.name == "nt" else ""
+_binary_filename = "cloudflared" + ".exe" if os.name == "nt" else ""
 
 
 def _ensure_posix_executable(path: pathlib.Path) -> None:
@@ -64,7 +57,7 @@ atexit.register(_file_manager.close)
 def get_path() -> pathlib.Path:
     # 1. Get package root
     root = files(__package__)
-    binary_ref = root / 'bin' / _binary_filename()
+    binary_ref = root / 'bin' / _binary_filename
 
     # 2. "Mount" the file
     # This guarantees 'path' is a real file system path (original or temp extracted).
@@ -84,37 +77,10 @@ def get_path() -> pathlib.Path:
     return path
 
 
-cloudflared_binary = BinaryWrapper(get_path())
-
-token_tunnel_cmd: ProcessArgs = "tunnel", "run", "--token"
-quick_tunnel_cmd: ProcessArgs = "tunnel", "--no-autoupdate", "--url"
-
-
-def run_token_tunnel(token: str) -> ProcessContext:
-    return cloudflared_binary.execute_streaming_response(*token_tunnel_cmd, token)
-
-
-def run_dns_fixed_tunnel(mappings: Mappings, api_token: str | None = None):
-    async def tunnel_token_cmd() -> ProcessArgs:
-        tunnel_manager = TunnelManager(api_token)
-        await tunnel_manager.remove_orphans()
-        tunnel_token = await tunnel_manager.fixed_dns_tunnel(mappings)
-        cmd = token_tunnel_cmd + (tunnel_token.__str__(),)
-        return cmd
-
-    return cloudflared_binary.execute_streaming_response_from_async(tunnel_token_cmd)
-
-
-# async def version():
-#     result = await cloudflared_binary.execute_await_response("version")
-#     if result.return_code != 0:
-#         raise ValueError("Version not found")
-#     return result.stdout
-
+token_tunnel_cmd = "tunnel", "run", "--token"
+quick_tunnel_cmd = "tunnel", "--no-autoupdate", "--url"
 
 cloudflayred = BinaryApp(get_path())
-
-
 
 
 @cloudflayred.instant()
@@ -124,30 +90,38 @@ async def version(): return "version"
 quickflare_url_pattern: re.Pattern[bytes] = re.compile(rb'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)')
 
 
+async def log_line(b: bytes):
+    pass
+
+
 async def filter_trycloudflare_url(stream_reader: asyncio.StreamReader, output_channel: OutputChannel) -> ChunkR:
     line_data = await stream_reader.readline()
+    await log_line(line_data)
     if match := quickflare_url_pattern.search(line_data):
         return match.group(1)
     return ChunkSignal.SKIP
 
 
 @cloudflayred.daemon(stream_chunker=filter_trycloudflare_url)
-def run_quick_tunnel(service: str):
+async def run_quick_tunnel(service: str):
     return *quick_tunnel_cmd, service
+
+
+@cloudflayred.daemon()
+def run_token_tunnel(token: str):
+    return *token_tunnel_cmd, token
 
 
 def confirm_token() -> bool:
     return True
 
-def run_dns_fixed_tunnel2(mappings: Mappings, api_token: str | None = None):
-    async def tunnel_token_cmd() -> ProcessArgs:
-        tunnel_manager = TunnelManager(api_token)
-        await tunnel_manager.remove_orphans()
-        tunnel_token = await tunnel_manager.fixed_dns_tunnel(mappings)
-        cmd = token_tunnel_cmd + (tunnel_token.__str__(),)
-        return cmd
 
-    return cloudflared_binary.execute_streaming_response_from_async(tunnel_token_cmd)
+@cloudflayred.daemon(guards=[confirm_token], )
+async def run_dns_fixed_tunnel(mappings: Mappings, api_token: str | None = None):
+    tunnel_manager = TunnelManager(api_token)
+    await tunnel_manager.remove_orphans()
+    tunnel_token = await tunnel_manager.fixed_dns_tunnel(mappings)
+    return token_tunnel_cmd + (tunnel_token.__str__())
 
 # def require_string_return[**P, T: str](func: Callable[P, T]) -> Callable[P, T]:
 #     @wraps(func)

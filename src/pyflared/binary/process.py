@@ -1,271 +1,231 @@
 import asyncio
+import contextlib
 import logging
-import os
-import re
-from abc import ABC
-from collections.abc import AsyncIterator
-from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Callable, Awaitable
+from typing import AsyncIterable, AsyncIterator, AsyncContextManager, Iterable, Callable, Self
 
-from pyflared.types import ProcessArgs
+import aiostream
+from beartype.door import die_if_unbearable
+
+from pyflared.shared.types import OutputChannel, StreamChunker, Responder, CmdArg, CmdArgs, Guard, \
+    ProcessOutput, AwaitableMaybe, ChunkSignal, CommandError
+from pyflared.utils.async_helper import safe_awaiter
+
+type FinalCmdFun[**P] = Callable[P, ProcessContext]
+
+type Converter[R] = Callable[[ProcessContext], R]
+type Mutator = Callable[[ProcessOutput], AwaitableMaybe[bytes]]
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class ProcessEvent(ABC):
-    line: str  # Move to bytes in the future if needed
-    timestamp: datetime = field(default_factory=datetime.now)
+@dataclass
+class _ProcessWriter:
+    process: asyncio.subprocess.Process
 
-    def __repr__(self) -> str:
-        # Format timestamp to HH:MM:SS (add .%f if you need milliseconds)
-        ts_str = self.timestamp.strftime("%H:%M:%S")
+    async def write(self, data: AwaitableMaybe[str | bytes]) -> None:
+        """write to stdin."""
+        if not self.process.stdin:
+            return
+        try:
+            data = await safe_awaiter(data)
+            self.process.stdin.write(data)
+            await self.process.stdin.drain()
+        except BrokenPipeError:
+            pass
 
-        # Get the class name dynamically (StdOut or StdErr)
-        tag = self.__class__.__name__
+    async def write_line(self, data: AwaitableMaybe[str]):
+        await self.write(data + "\n")
 
-        # Strip trailing newlines from the line so it prints cleanly
-        clean_line = self.line.rstrip()
-
-        return f"[{ts_str}] [{tag}] {clean_line}"
-
-    def log(self):
-        match self:
-            case StdOut():
-                logger.debug(self)
-            case StdErr():
-                logger.warning(self)
-            case _:
-                logger.info(self)
+    async def write_from_responders(self, chunk: bytes, channel: OutputChannel, responders: Iterable[Responder]):
+        for responder in responders:
+            response = await safe_awaiter(responder(chunk, channel))
+            if response is not None:
+                await self.write(response)
 
 
-@dataclass(frozen=True)
-class StdOut(ProcessEvent): pass
+@dataclass
+class _StreamMaker(_ProcessWriter):
+    chunker: StreamChunker | None = None
+    responders: list[Responder] | None = None
+    log_err_stream: bool = True
 
+    async def stream_context(self, fixed_input: str | None, ) -> aiostream.core.Stream:
+        """Constructs the aiostream graph without starting it."""
+        if fixed_input:
+            await self.write(fixed_input)
 
-@dataclass(frozen=True)
-class StdErr(ProcessEvent): pass
+        sources: list[aiostream.core.Stream] = []
 
+        def channel_tagger(channel: OutputChannel) -> Callable[
+            [bytes], AwaitableMaybe[ProcessOutput]]:
+            """Creates the mapping function that converts bytes to ProcessOutput."""
 
-class ProcessInstance(AsyncIterator[StdOut | StdErr]):
-    def __init__(self, process: asyncio.subprocess.Process, queue: asyncio.Queue):
-        self._process = process
-        self._queue = queue
+            async def transformer(chunk: bytes) -> ProcessOutput:
+                if self.responders:
+                    await self.write_from_responders(chunk, channel, self.responders)
 
-    @property
-    def return_code(self) -> int | None:
-        return self._process.returncode
+                # if self.log_err_stream and channel == OutputChannel.STDERR:
+                if channel == OutputChannel.STDERR:
+                    logger.debug(chunk.decode())
+                return ProcessOutput(chunk, channel)
 
-    @property
-    def is_running(self) -> bool:
-        return self._process.returncode is None
+            return transformer
 
-    async def __anext__(self) -> StdOut | StdErr:
-        # Trust the Monitor/Context Manager to send None when done.
-        if event := await self._queue.get():
-            return event
-        raise StopAsyncIteration
+        async def reader_chunker(
+                stream: asyncio.StreamReader, output_channel: OutputChannel,
+                chunker: StreamChunker) -> AsyncIterator[bytes]:
+            while True:
+                chunk = await safe_awaiter(chunker(stream, output_channel))
+                match chunk:
+                    case bytes():
+                        yield chunk
+                    case ChunkSignal.SKIP:
+                        continue
+                    case ChunkSignal.EOF:
+                        break
 
+        # Helper to attach responders/transformers to a raw stream
+        def attach_channel(raw_stream: asyncio.StreamReader, channel: OutputChannel) -> aiostream.core.Stream:
+            if self.chunker:
+                source = reader_chunker(raw_stream, channel, self.chunker)
+            else:
+                source = raw_stream
 
-LineProcessor = Callable[[bytes, type[StdOut | StdErr]], StdOut | StdErr]
-AsyncCmd = Callable[[], Awaitable[tuple[str, ...]]]
+            # 2. Map: Convert bytes -> ProcessOutput AND handle responders
+            return aiostream.stream.map(source, channel_tagger(channel))
 
+        if self.process.stdout:
+            sources.append(attach_channel(self.process.stdout, OutputChannel.STDOUT))
 
-def default_line_processor(chunk: bytes, event_type: type[StdOut | StdErr]) -> StdOut | StdErr | None:
-    if event := chunk.decode().strip():
-        return event_type(event)
-    else:
-        return None
+        if self.process.stderr:
+            sources.append(attach_channel(self.process.stderr, OutputChannel.STDERR))
 
-
-def default_async_cmd(cmd: ProcessArgs) -> AsyncCmd:
-    if not cmd:
-        raise ValueError("No command provided")
-
-    async def _inner() -> ProcessArgs:
-        return cmd
-
-    return _inner
+        # 3. Merge streams
+        merged = aiostream.stream.merge(*sources)
+        return merged
 
 
 @dataclass()
-class ProcessData:
-    # binary_path = binary
-    # async_cmd: AsyncCmd = async_cmd
-    # def __init__(self, binary: str | os.PathLike, async_cmd: AsyncCmd, ):
+class ProcessInstance(_ProcessWriter, AsyncIterable[ProcessOutput]):
+    merged_iterable: AsyncIterable[ProcessOutput]
 
-    binary_path: str | os.PathLike
-    async_cmd: AsyncCmd
-    line_processor: LineProcessor = default_line_processor
+    def __aiter__(self):
+        return self.merged_iterable
 
-    def run(self):
-        return ProcessContext(self)
+    async def stdout_only(self) -> AsyncIterator[bytes]:
+        """Yields only stdout, but drains stderr."""
+        async for output in self:
+            if output.channel == OutputChannel.STDOUT:
+                yield output.data
 
-    @classmethod
-    def from_binary_and_cmd(cls, binary: str | os.PathLike, cmd: ProcessArgs):
-        return cls(binary, default_async_cmd(cmd))
+    async def stderr_only(self) -> AsyncIterator[bytes]:
+        """Yields only stderr, but drains stdout."""
+        async for output in self:
+            if output.channel == OutputChannel.STDERR:
+                yield output.data
 
-    @classmethod
-    def from_args(cls, args: ProcessArgs):
-        return cls.from_binary_and_cmd(args[0], args[1:])
+    async def pipe_to(self, target: Self, mutator: Mutator | None = None) -> None:
+        async for output in self:
+            if mutator:
+                await target.write(mutator(output))
+            elif output.channel == OutputChannel.STDOUT:
+                await target.write(output.data)
 
-
-# pd = ProcessData.from_args("", "version")
-
-# pd2 = pd.
-
-
-class ProcessContext(AbstractAsyncContextManager[ProcessInstance]):
-    def __init__(self, process_data: ProcessData):
-        self.process_data = process_data
-
-        self._process: asyncio.subprocess.Process | None = None
-        self._tasks: list[asyncio.Task] = []
-        # We define queue here, but typically it's cleaner to init in __aenter__
-        # to ensure a fresh queue for every run if you ever relaxed the single-use rule.
-        self._queue: asyncio.Queue[StdOut | StdErr | None] = asyncio.Queue()
-
-    async def _stream_pass(self, stream: asyncio.StreamReader, event_type: type[StdOut | StdErr]):
-        try:
-            while line_bytes := await stream.readline():
-                if event := self.process_data.line_processor(line_bytes, event_type):
-                    self._queue.put_nowait(event)
-        except Exception as e:
-            # Only log if it's not a cancellation error
-            if not isinstance(e, asyncio.CancelledError):
-                logger.debug(f"[{self.process_data.binary_path}] Reader failed: {e}")
-            else:
-                logger.debug(f"Reader closed: {e}")
-
-    async def _monitor_completion(self, process: asyncio.subprocess.Process, readers: list[asyncio.Task]):
-        # 1. Wait for logs to finish
-        if readers:
-            await asyncio.gather(*readers, return_exceptions=True)
-
-        # 2. Update the exit code
-        try:
-            await asyncio.wait_for(process.wait(), timeout=1.0)
-        except (asyncio.TimeoutError, Exception):
+    async def drain_wait(self) -> int:
+        """Drains all output until the process completes."""
+        async for _ in self:
             pass
+        return await self.process.wait()
 
-        # 3. Release the user
-        self._queue.put_nowait(None)
+    @property
+    def returncode(self) -> int | None:
+        return self.process.returncode
+
+    async def stop_gracefully(self):
+        if self.process and self.process.returncode is None:
+            if self.process.stdin:
+                self.process.stdin.close()
+
+            self.process.terminate()
+            try:
+                await asyncio.wait_for(self.process.wait(), timeout=2.0)
+            except asyncio.TimeoutError:
+                self.process.kill()
+                await self.process.wait()
+
+
+@dataclass
+class ProcessContext(AsyncContextManager[ProcessInstance]):
+    """
+    Manages the lifecycle of a subprocess and its associated IO streams.
+    """
+    binary_path: CmdArg
+    cmd_args: CmdArgs
+
+    # Configuration
+    guards: list[Guard] | None = None
+    stream_chunker: StreamChunker | None = None
+
+    fixed_input: str | None = None
+    responders: list[Responder] | None = None
+    log_err_stream: bool = True
+
+    # Internal State
+    process: asyncio.subprocess.Process | None = field(default=None, init=False)
+    running_process: ProcessInstance | None = field(default=None, init=False)
+    stack: contextlib.AsyncExitStack = field(default_factory=contextlib.AsyncExitStack, init=False)
+
+    async def _validate_guards(self):
+        if self.guards:
+            for guard in self.guards:
+                if not await safe_awaiter(guard()):
+                    raise CommandError(f"Precondition failed: {guard.__name__}")
 
     async def __aenter__(self) -> ProcessInstance:
-        if self._process is not None:
-            raise RuntimeError("Context already entered, make a new one")
+        if self.running_process:
+            raise RuntimeError("Process already started once")
 
-        args = await self.process_data.async_cmd()
+        # 1. Prepare Args
+        args = await safe_awaiter(self.cmd_args)
+        die_if_unbearable(args, CmdArgs)
 
-        logger.debug(f"Starting: {self.process_data.binary_path} {args}")
-        # 1. Start Process
+        if isinstance(args, str):
+            args = [args]
+
+        # 2. Validation
+        if self.guards:
+            await self._validate_guards()
+
+        # 3. Start Process
+        logger.debug(f"Spawning {self.binary_path} with args: {args}")
         process = await asyncio.create_subprocess_exec(
-            self.process_data.binary_path, *args,
+            self.binary_path, *args,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        self._process = process
-
-        # 2. Start Readers
-        reader_tasks: list[asyncio.Task] = []
-
-        if stdout := process.stdout:
-            reader_tasks.append(asyncio.create_task(
-                self._stream_pass(stdout, StdOut)
-            ))
-
-        if stderr := process.stderr:
-            reader_tasks.append(asyncio.create_task(
-                self._stream_pass(stderr, StdErr)
-            ))
-
-        # 3. Start Monitor
-        # Note: Pass the LIST of readers, don't unpack with *.
-        # Easier to handle inside the monitor logic.
-        monitor_task = asyncio.create_task(
-            self._monitor_completion(process, reader_tasks)
+            stderr=asyncio.subprocess.PIPE,
+            stdin=asyncio.subprocess.PIPE
         )
 
-        self._tasks = reader_tasks + [monitor_task]
+        stream_maker = _StreamMaker(
+            process, chunker=self.stream_chunker, responders=self.responders,
+            log_err_stream=self.log_err_stream)
+        x1 = await stream_maker.stream_context(self.fixed_input)
+        merged_stream = await self.stack.enter_async_context(x1.stream())
+        self.running_process = ProcessInstance(process, merged_stream)
+        return self.running_process
 
-        return ProcessInstance(process, self._queue)
-
-    async def __aexit__(self, exc_type, exc, tb):
-        logger.info("Stopping binary...")
-
-        if self._process is None:
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        if not self.running_process:
             return
+        await self.stack.aclose()
+        await self.running_process.stop_gracefully()
 
-        # 1. Terminate Process
-        if self._process.returncode is None:
-            try:
-                self._process.terminate()
-                await asyncio.wait_for(self._process.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
-                self._process.kill()
-
-        # 2. Cancel ALL Tasks (Monitor included)
-        for task in self._tasks:
-            task.cancel()
-
-        # 3. Wait for cancellations to settle
-        await asyncio.gather(*self._tasks, return_exceptions=True)
-
-        # 4. SAFETY NET: Inject None
-        # We just killed the Monitor. If the Monitor didn't run yet,
-        # the queue is missing the sentinel. We must add it manually.
-        self._queue.put_nowait(None)
-
-    async def start_background(self) -> int | None:
+    # `responders` is also a good place to add logger if needed
+    async def start_background(self, responders: Iterable[Responder] | None = None) -> int | None:
         async with self as service:
             async for event in service:
-                event.log()
-        return service.return_code
-
-
-# class User(BaseModel):
-#     id: int
-#     name: str
-#
-# user = User(id=1, name="Alice")
-# # Pydantic has this built-in by default
-# user2 = user.model_copy(update(name="A"))
-
-quickflare_url_pattern = re.compile(r'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)')
-
-# @dataclass()
-# class VA:
-#     name: str
-#     id: int
-#
-#     def w(self):
-#         print("a")
-#         pass
-#
-#
-# def r():
-#     print("a")
-#
-#
-# va = VA("", 3)
-#
-#
-# class VA2(VA):
-#     def w(self):
-#         print("b")
-#
-# va2 = VA2("", 3)
-
-# class WE:
-#
-#     def __init__(self, id1: int):
-#         self.id1 = id1
-#
-#     @classmethod
-#     def w(cls) -> Self:
-#         return cls(1)
-#
-#
-# we = WE.w()
+                if responders:
+                    await service.write_from_responders(event.data, event.channel, responders)
+                # logger.debug(event)
+                # print(event.data)
+            return service.returncode

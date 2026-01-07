@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 import os
 from collections import defaultdict
 from collections.abc import Iterable, Awaitable
@@ -59,7 +58,7 @@ class ChunkSignal(StrEnum):
 class ProcessOutput(NamedTuple):
     data: bytes
     channel: OutputChannel
-    timestamp: datetime.datetime = datetime.datetime.now(datetime.UTC)
+    # timestamp: datetime.datetime = datetime.datetime.now(datetime.UTC)
 
 
 type CmdArg = str | bytes | os.PathLike[str] | os.PathLike[bytes]
