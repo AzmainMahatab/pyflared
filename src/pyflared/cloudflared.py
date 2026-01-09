@@ -1,6 +1,5 @@
 import asyncio
 import atexit
-import logging
 import os
 import pathlib
 import re
@@ -12,13 +11,13 @@ from importlib.resources.abc import Traversable
 from pathlib import Path
 from typing import Iterator
 
+from loguru import logger
+
 from pyflared.binary.binary_decorator import BinaryApp
 from pyflared.shared.types import Mappings, ChunkR, ChunkSignal, OutputChannel
 from pyflared.tunnel import TunnelManager
 
 __all__ = ["run_token_tunnel", "run_quick_tunnel", "version"]
-
-logger = logging.getLogger(__name__)
 
 
 @cached_property
@@ -96,6 +95,7 @@ async def log_line(b: bytes):
 
 async def filter_trycloudflare_url(stream_reader: asyncio.StreamReader, output_channel: OutputChannel) -> ChunkR:
     line_data = await stream_reader.readline()
+    logger.opt(raw=True).debug(line_data.decode())
     await log_line(line_data)
     if match := quickflare_url_pattern.search(line_data):
         return match.group(1)
@@ -117,25 +117,9 @@ def confirm_token() -> bool:
 
 
 @cloudflayred.daemon(guards=[confirm_token], )
-async def run_dns_fixed_tunnel(mappings: Mappings, api_token: str | None = None):
+async def run_dns_fixed_tunnel(mappings: Mappings, remove_orphan: bool = True, api_token: str | None = None):
     tunnel_manager = TunnelManager(api_token)
-    await tunnel_manager.remove_orphans()
+    if remove_orphan:
+        await tunnel_manager.remove_orphans()
     tunnel_token = await tunnel_manager.fixed_dns_tunnel(mappings)
-    return token_tunnel_cmd + (tunnel_token.__str__())
-
-# def require_string_return[**P, T: str](func: Callable[P, T]) -> Callable[P, T]:
-#     @wraps(func)
-#     def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
-#         return func(*args, **kwargs)
-#     return wrapper
-#
-# # --- Test ---
-#
-# @require_string_return
-# def good_func() -> str:
-#     return "ok"
-#
-# # ❌ TYPE ERROR: Type 'int' cannot be assigned to type variable 'T' bound to 'str'.
-# @require_string_return
-# def bad_func(a: int, b: int) -> int:
-#     return a + b
+    return *token_tunnel_cmd, tunnel_token.get_secret_value()

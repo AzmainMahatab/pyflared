@@ -18,7 +18,18 @@ type ZoneId = str
 type ZoneName = str
 
 
+class ZoneIds(set[ZoneId]):
+    pass
+
+
 class ZoneNames(set[ZoneName]):
+    pass
+
+
+type AccountId = str
+
+
+class AccountIds(set[ZoneId]):
     pass
 
 
@@ -38,7 +49,9 @@ class TunnelIds(set[TunnelId]):
 
 
 class CreationRecords(defaultdict[ZoneId, list[record_batch_params.CNAMERecordParam]]):
-    pass
+    def __init__(self):
+        # Explicitly pass 'list' to the parent constructor
+        super().__init__(list)
 
 
 class CommandError(Exception):

@@ -29,10 +29,13 @@ dependencies = [
     "aiohttp",
     "aiostream",
     "wrapt",
+    "loguru",
     "typer",
     "platformdirs",
     "rich",
     "beartype",
+    "pydantic",
+    "pydantic_settings",
 ]
 
 [project.urls]

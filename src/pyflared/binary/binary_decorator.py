@@ -1,11 +1,8 @@
-import logging
 from functools import wraps
 from typing import Callable, Awaitable, overload
 
 from pyflared.binary.process import ProcessContext, FinalCmdFun
 from pyflared.shared.types import Guard, CmdArg, Responder, StreamChunker, CmdTargetable
-
-logger = logging.getLogger(__name__)
 
 
 def responder_proxy(func: Responder) -> Responder:
@@ -14,7 +11,6 @@ def responder_proxy(func: Responder) -> Responder:
 
 
 # type AnyFunThatReturnsArgs = Callable[..., CmdArgs]
-
 
 class BinaryApp:
     def __init__(self, binary_path: CmdArg):
@@ -25,7 +21,6 @@ class BinaryApp:
             stream_chunker: StreamChunker | None = None,  # This is also a good place to add logger if needed
             fixed_input: str | None = None,
             responders: list[Responder] | None = None,
-            log_err_stream: bool = True,
     ) -> Callable[[CmdTargetable[P]], FinalCmdFun[P]]:
         def decorator(func: CmdTargetable[P]) -> FinalCmdFun[P]:
             @wraps(func)
@@ -39,7 +34,6 @@ class BinaryApp:
                     fixed_input=fixed_input,
                     guards=guards,
                     responders=responders,
-                    log_err_stream=log_err_stream,
                 )
                 return process_context
 
@@ -66,7 +60,6 @@ class BinaryApp:
             stream_chunker: StreamChunker | None = None,
             responders: list[Responder] | None = None,
             guards: list[Guard] | None = None,
-            log_err_stream: bool = True,
     ) -> Callable[[CmdTargetable[P]], Callable[P, Awaitable[R]]]:
         ...
 
@@ -77,7 +70,6 @@ class BinaryApp:
             stream_chunker: StreamChunker | None = None,
             responders: list[Responder] | None = None,
             guards: list[Guard] | None = None,
-            log_err_stream: bool = True,
     ) -> Callable[[CmdTargetable[P]], Callable[P, Awaitable[R | str]]]:
         actual_converter = converter if converter is not None else self.concatenate_stdout
 
@@ -91,7 +83,6 @@ class BinaryApp:
             stream_chunker=stream_chunker,
             responders=responders,
             guards=guards,
-            log_err_stream=log_err_stream,
         )
 
         def decorator(func: CmdTargetable[P]) -> Callable[P, Awaitable[R]]:

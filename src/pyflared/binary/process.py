@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import logging
 from dataclasses import dataclass, field
 from typing import AsyncIterable, AsyncIterator, AsyncContextManager, Iterable, Callable, Self
 
@@ -16,7 +15,7 @@ type FinalCmdFun[**P] = Callable[P, ProcessContext]
 type Converter[R] = Callable[[ProcessContext], R]
 type Mutator = Callable[[ProcessOutput], AwaitableMaybe[bytes]]
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 @dataclass
@@ -48,11 +47,11 @@ class _ProcessWriter:
 class _StreamMaker(_ProcessWriter):
     chunker: StreamChunker | None = None
     responders: list[Responder] | None = None
-    log_err_stream: bool = True
 
     async def stream_context(self, fixed_input: str | None, ) -> aiostream.core.Stream:
         """Constructs the aiostream graph without starting it."""
         if fixed_input:
+            logger.debug(f"Sending fixed input: {fixed_input}")
             await self.write(fixed_input)
 
         sources: list[aiostream.core.Stream] = []
@@ -66,8 +65,8 @@ class _StreamMaker(_ProcessWriter):
                     await self.write_from_responders(chunk, channel, self.responders)
 
                 # if self.log_err_stream and channel == OutputChannel.STDERR:
-                if channel == OutputChannel.STDERR:
-                    logger.debug(chunk.decode())
+                # if channel == OutputChannel.STDERR:
+                #     logger.debug(chunk.decode())
                 return ProcessOutput(chunk, channel)
 
             return transformer
@@ -169,7 +168,6 @@ class ProcessContext(AsyncContextManager[ProcessInstance]):
 
     fixed_input: str | None = None
     responders: list[Responder] | None = None
-    log_err_stream: bool = True
 
     # Internal State
     process: asyncio.subprocess.Process | None = field(default=None, init=False)
@@ -206,9 +204,7 @@ class ProcessContext(AsyncContextManager[ProcessInstance]):
             stdin=asyncio.subprocess.PIPE
         )
 
-        stream_maker = _StreamMaker(
-            process, chunker=self.stream_chunker, responders=self.responders,
-            log_err_stream=self.log_err_stream)
+        stream_maker = _StreamMaker(process, chunker=self.stream_chunker, responders=self.responders)
         x1 = await stream_maker.stream_context(self.fixed_input)
         merged_stream = await self.stack.enter_async_context(x1.stream())
         self.running_process = ProcessInstance(process, merged_stream)
