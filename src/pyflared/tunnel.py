@@ -1,8 +1,7 @@
 import asyncio
-import logging
 import socket
-from collections import defaultdict
 from datetime import datetime, timezone
+from typing import Iterable
 
 from cloudflare import AsyncCloudflare
 from cloudflare.types import CloudflareTunnel
@@ -10,13 +9,14 @@ from cloudflare.types.dns import record_batch_params
 from cloudflare.types.dns.record_response import CNAMERecord
 from cloudflare.types.zero_trust.tunnels.cloudflared.configuration_update_params import ConfigIngress, Config
 from cloudflare.types.zones import Zone
+from loguru import logger
 from pydantic import SecretStr
 
 from pyflared import consts
-from pyflared.api.createtunnel import CreatedTunnel, create_tunnel
-from pyflared.shared.types import ZoneNameDict, Domain, ZoneId, ZoneNames, Mappings, TunnelIds, CreationRecords
-
-logger = logging.getLogger(__name__)
+from pyflared.api.createtunnel import CustomTunnel, create_tunnel
+from pyflared.log.pretty import Pretty
+from pyflared.sdk.fetch import fetch
+from pyflared.shared.types import ZoneNameDict, Domain, ZoneId, ZoneNames, Mappings, TunnelIds, CreationRecords, ZoneIds
 
 
 def auto_tunnel_name() -> str:
@@ -26,7 +26,7 @@ def auto_tunnel_name() -> str:
 
 
 def _tunnel_id(record: CNAMERecord) -> str | None:
-    return record.content.removesuffix(consts.cfargotunnel) if record.content else None
+    return record.content.removesuffix(consts.cfargotunnel) if record.content.endswith(consts.cfargotunnel) else None
 
 
 def _is_orphan(tunnel: CloudflareTunnel) -> bool:
@@ -37,7 +37,8 @@ def _is_orphan(tunnel: CloudflareTunnel) -> bool:
     #         (tunnel.status == "inactive" and tunnel.created_at < threshold) or (
     #         tunnel.status == "down" and tunnel.conns_inactive_at and tunnel.conns_inactive_at < threshold)
     # )
-    return tunnel.metadata.get(consts.tag) and tunnel.status in ("inactive", "down")
+    # Must have our tag + inactive or down (0 or -1 connections)
+    return tunnel.metadata.get(consts.api_managed_tag) and tunnel.status in ("inactive", "down")
 
 
 def find_zone(zones: ZoneNameDict, domain: Domain) -> Zone:
@@ -75,13 +76,23 @@ class TunnelManager:
 
     # Almost direct methods
     async def del_tunnel(self, tunnel: CloudflareTunnel):
+        logger.info(f"Deleting orphan tunnel: {Pretty(tunnel)}")
         async with self.semaphore:
-            await self.client.zero_trust.tunnels.cloudflared.delete(
+            result = await self.client.zero_trust.tunnels.cloudflared.delete(
                 tunnel_id=tunnel.id, account_id=tunnel.account_tag)  # type: ignore
+            logger.debug(f"Deletion result: {Pretty(result.model_dump())}")
 
     async def batch_dns_create(self, zone_id: ZoneId, records: list[record_batch_params.CNAMERecordParam]):
         async with self.semaphore:
-            await self.client.dns.records.batch(zone_id=zone_id, posts=records)
+            logger.info(f"Creating DNS records: {Pretty(records)}")
+            result = await self.client.dns.records.batch(zone_id=zone_id, posts=records, )
+            logger.debug(f"Batch creation result: {Pretty(result.model_dump())}")
+
+    async def zone_batch_delete_dns(self, zone_id: ZoneId, deletes: Iterable[record_batch_params.Delete]):
+        logger.info(f"Orphan DNS records found: {Pretty(deletes)}")
+        async with self.semaphore:
+            result = await self.client.dns.records.batch(zone_id=zone_id, deletes=deletes)
+        logger.debug(f"Batch deletion result: {Pretty(result.model_dump())}")
 
     async def update_tunnel(self, tunnel_id: str, account_id: str, ingresses: list[ConfigIngress]):
         async with self.semaphore:
@@ -90,7 +101,9 @@ class TunnelManager:
             )
 
     # Easy methods
-    async def remove_orphans_tunnels_from_account(self, account_id: str, available: TunnelIds):  # tunnel_id
+    async def remove_orphans_tunnels_from_account(self, account_id: str, available: TunnelIds,
+                                                  traversed_zones: ZoneIds):  # tunnel_id
+        logger.info(f"Checking for orphan tunnels in account: {account_id}")
         tunnels = self.tunnels(account_id=account_id)
         async with asyncio.TaskGroup() as tg:
             async for tunnel in tunnels:
@@ -99,29 +112,62 @@ class TunnelManager:
                 else:
                     available.add(tunnel.id)
 
-    async def remove_orphans_dns_from_zone(self, zone_id: str, available_tunnels: set[str], check_time: datetime):
-        deletes: defaultdict[str, list[record_batch_params.Delete]] = defaultdict()  # zone_id -> deleteList
+    async def remove_orphans_dns_from_zone(self, zone_id: str, active_tunnels: set[str], check_time: datetime):
+        deletes: list[record_batch_params.Delete] = []
 
+        # Find dns that are not under any active tunnel at check_time
         async for record in self.cname_records(zone_id=zone_id):
-            if record.created_on < check_time and _tunnel_id(record) not in available_tunnels:
-                deletes[zone_id].append(record_batch_params.Delete(id=record.id))
+            if consts.api_managed_tag in (record.comment or "") and record.created_on < check_time and _tunnel_id(
+                    record) not in active_tunnels:
+                deletes.append(record_batch_params.Delete(id=record.id))
+        await self.zone_batch_delete_dns(zone_id=zone_id, deletes=deletes)
 
-        async with asyncio.TaskGroup() as tg:
-            for zone_id, delete_list in deletes.items():
-                tg.create_task(self.client.dns.records.batch(zone_id=zone_id, deletes=delete_list))
+    async def a2(self):
+        async for a in self.client.accounts.list():
+            yield a
+
+    async def a3(self):
+        # all_accounts: list[Account] = []
+        page = 1
+        last_account_id: str | None = None
+
+        while True:
+            # Request a specific page explicitly
+            # Note: Check your specific SDK version docs if 'page' is the exact arg name,
+            # but it is standard for Cloudflare v4.
+            response = await self.client.accounts.list(page=page, per_page=50)
+
+            # If the SDK returns a Paginator object, you might need to access .items or similar
+            # But usually passing `page` forces a single page return or an empty list check.
+            # If the SDK *still* wraps it in a Paginator, we inspect the internal list.
+            for a in response.result:
+                if last_account_id is not None and a.id == last_account_id:
+                    return
+                yield a
+                last_account_id = a.id
+
+            page += 1
 
     async def remove_orphans(self):
-        check_time = datetime.now(timezone.utc)
+        logger.info("Checking for orphan tunnels and DNS records...")
+        tunnel_check_time = datetime.now(timezone.utc)
+        # TODO, travese the zones first, store the attached accountids since we only need id, this will alow 1 less call
 
+        # zones, accounts = await fetch(self.client)
+
+        # Iterate over all tunnels and collect active ones
+        active_tunnels = TunnelIds()
+        traversed_zones = ZoneIds()
         async with asyncio.TaskGroup() as tg:
-            available_tunnels = TunnelIds()
-            async for account in self.accounts():
-                tg.create_task(self.remove_orphans_tunnels_from_account(account.id, available_tunnels))
+            # async for account in self.accounts():
+            async for account in self.a3():
+                print(f"Checking account: {account.id}")
+                tg.create_task(self.remove_orphans_tunnels_from_account(account.id, active_tunnels))
 
         # Delete orphan DNS records
         async with asyncio.TaskGroup() as tg:
             async for zone in self.zones():
-                tg.create_task(self.remove_orphans_dns_from_zone(zone.id, available_tunnels, check_time))
+                tg.create_task(self.remove_orphans_dns_from_zone(zone.id, active_tunnels, tunnel_check_time))
 
     async def all_dns_records(self) -> ZoneNames:
         record_set = ZoneNames()
@@ -148,25 +194,28 @@ class TunnelManager:
             zones[zone.name] = zone
         return zones
 
-    async def make_tunnel(self, account_id: str) -> CloudflareTunnel:
-        tunnel = self.client.zero_trust.tunnels.cloudflared.create(
-            account_id=account_id,
-            name=auto_tunnel_name(),
-            extra_body={
-                "metadata": {
-                    consts.tag: False
-                }
-            }
-        )
-        return await tunnel  # type: ignore
+    # async def make_tunnel(self, account_id: str) -> CloudflareTunnel:
+    #     tunnel = self.client.zero_trust.tunnels.cloudflared.create(
+    #         account_id=account_id,
+    #         name=auto_tunnel_name(),
+    #         extra_body={
+    #             "metadata": {
+    #                 consts.api_managed_tag: True
+    #             }
+    #         }
+    #     )
+    #     return await tunnel  # type: ignore
 
-    async def create_auto_tunnel(self, account_id: str) -> CreatedTunnel:
-        return await create_tunnel(
-            api_token=self.client.api_token,  # type: ignore
-            account_id=account_id,
-            tunnel_name=auto_tunnel_name(),
-            metadata={consts.tag: False}
-        )
+    async def create_auto_tunnel(self, account_id: str) -> CustomTunnel:
+        tunnel_name = auto_tunnel_name()
+        # logger.info(f"Creating tunnel {tunnel_name}...")
+        async with self.semaphore:
+            return await create_tunnel(
+                account_id=account_id,
+                tunnel_name=tunnel_name,
+                metadata={consts.api_managed_tag: True},
+                api_token=self.client.api_token,  # type: ignore #This also helpful because their client also checks env
+            )
 
     async def fixed_dns_tunnel(self, mappings: Mappings) -> SecretStr:  # Tunnel Token
         if not mappings:
@@ -176,16 +225,18 @@ class TunnelManager:
         all_records = await self.all_dns_records()
         common_names = all_records & mappings.keys()
         if common_names:
-            raise Exception(f"Domain(s) already mapped: {common_names}")
+            raise Exception(f"Domain(s) already mapped: {Pretty(common_names)}")
 
-        # make tunnel
+        # Find the zone for the first domain
         zone_dict = await self.zone_name_dict()
 
         first_domain, _ = dict_first(mappings)
         first_zone = find_zone(zone_dict, first_domain)
 
+        # Make tunnel on first matched zone
         tunnel = await self.create_auto_tunnel(first_zone.account.id)  # type: ignore
 
+        # Create DNS records
         ingresses = [
             ConfigIngress(service="http_status:404")  # type: ignore # default fallback
         ]
@@ -197,16 +248,17 @@ class TunnelManager:
             )
 
             zone = find_zone(zone_dict, domain)
-            record = tunnel.dns_record(domain)
+            record = tunnel.build_dns_record(domain)
             creation_records[zone.id].append(record)
 
         async with asyncio.TaskGroup() as tg:
+            # Update tunnel with ingresses and create DNS records in async
             tg.create_task(self.update_created(tunnel, ingresses))
             tg.create_task(self.easy_batch_dns_create(creation_records))
 
         return tunnel.secret
 
-    async def update_created(self, tunnel: CreatedTunnel, ingresses: list[ConfigIngress]):
+    async def update_created(self, tunnel: CustomTunnel, ingresses: list[ConfigIngress]):
         await self.update_tunnel(tunnel_id=tunnel.id, account_id=tunnel.account_id, ingresses=ingresses)
 
     async def easy_batch_dns_create(self, creation_records: CreationRecords):
