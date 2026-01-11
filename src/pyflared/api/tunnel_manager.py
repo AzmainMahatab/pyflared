@@ -1,6 +1,7 @@
 import asyncio
+import re
 import socket
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from typing import Iterable
 
 from cloudflare import AsyncCloudflare
@@ -20,9 +21,24 @@ from pyflared.shared.types import ZoneNameDict, Domain, ZoneId, ZoneNames, Mappi
 
 
 def auto_tunnel_name() -> str:
-    device_name = socket.gethostname()
-    now = datetime.now()
-    return device_name + "_" + now.strftime("%Y%m%d_%H%M%S")
+    """
+    Generates a readable, consistent tunnel name.
+    Format: hostname_YYYY-MM-DD_HH-MM-SS
+    Example: 'macbook-pro_2026-01-09_16-30-05'
+    """
+    # 1. Get Hostname & Clean it
+    # We split by '.' to handle FQDNs (e.g., 'server01.us-east.prod' -> 'server01')
+    raw_host = socket.gethostname().split('.')[0]
+
+    # Remove special chars to ensure CLI/API compatibility, keep underscores/hyphens
+    clean_host = re.sub(r'[^a-zA-Z0-9_-]', '-', raw_host).lower()
+
+    # 2. Get UTC Time (Consistent across all timezones)
+    # Using specific format: Date and Time separated by underscore
+    now_utc = datetime.now(UTC)
+    human_timestamp = now_utc.strftime("%Y-%m-%d_%H-%M-%S")
+
+    return f"{clean_host}_{human_timestamp}"
 
 
 def _tunnel_id(record: CNAMERecord) -> str | None:
@@ -124,37 +140,11 @@ class TunnelManager:
         if deletes:
             await self.zone_batch_delete_dns(zone_id=zone_id, deletes=deletes)
 
-    async def a2(self):
-        async for a in self.client.accounts.list():
-            yield a
-
-    async def a3(self):
-        # all_accounts: list[Account] = []
-        page = 1
-        last_account_id: str | None = None
-
-        while True:
-            # Request a specific page explicitly
-            # Note: Check your specific SDK version docs if 'page' is the exact arg name,
-            # but it is standard for Cloudflare v4.
-            response = await self.client.accounts.list(page=page, per_page=50)
-
-            # If the SDK returns a Paginator object, you might need to access .items or similar
-            # But usually passing `page` forces a single page return or an empty list check.
-            # If the SDK *still* wraps it in a Paginator, we inspect the internal list.
-            for a in response.result:
-                if last_account_id is not None and a.id == last_account_id:
-                    return
-                yield a
-                last_account_id = a.id
-
-            page += 1
-
     async def remove_orphans(self):
         logger.info("Checking for orphan tunnels and DNS records...")
         tunnel_check_time = datetime.now(timezone.utc)
-        # TODO, travese the zones first, store the attached accountids since we only need id, this will alow 1 less call
 
+        # We are requesting the zones first and collecting the account_ids to bypass 1 less network call
         zone_ids, account_ids = await fetch_zones_account_ids(self.client)
 
         # Iterate over all tunnels and collect active ones
@@ -195,20 +185,9 @@ class TunnelManager:
             zones[zone.name] = zone
         return zones
 
-    # async def make_tunnel(self, account_id: str) -> CloudflareTunnel:
-    #     tunnel = self.client.zero_trust.tunnels.cloudflared.create(
-    #         account_id=account_id,
-    #         name=auto_tunnel_name(),
-    #         extra_body={
-    #             "metadata": {
-    #                 consts.api_managed_tag: True
-    #             }
-    #         }
-    #     )
-    #     return await tunnel  # type: ignore
-
-    async def create_auto_tunnel(self, account_id: str) -> CustomTunnel:
-        tunnel_name = auto_tunnel_name()
+    async def create_auto_tunnel(self, account_id: str, tunnel_name: str | None = None) -> CustomTunnel:
+        if not tunnel_name:
+            tunnel_name = auto_tunnel_name()
         # logger.info(f"Creating tunnel {tunnel_name}...")
         async with self.semaphore:
             return await create_tunnel(
@@ -218,7 +197,10 @@ class TunnelManager:
                 api_token=self.client.api_token,  # type: ignore #This also helpful because their client also checks env
             )
 
-    async def fixed_dns_tunnel(self, mappings: Mappings) -> SecretStr:  # Tunnel Token
+    async def fixed_dns_tunnel(
+            self, mappings: Mappings,
+            tunnel_name: str | None = None) -> SecretStr:  # Tunnel Token
+
         if not mappings:
             raise Exception("No mappings provided")
 
@@ -234,8 +216,8 @@ class TunnelManager:
         first_domain, _ = dict_first(mappings)
         first_zone = find_zone(zone_dict, first_domain)
 
-        # Make tunnel on first matched zone
-        tunnel = await self.create_auto_tunnel(first_zone.account.id)  # type: ignore
+        # Make tunnel on first matched zone #TODO Check if tunnel can be created with the ingresses in one go
+        tunnel = await self.create_auto_tunnel(first_zone.account.id, tunnel_name=tunnel_name)
 
         # Create DNS records
         ingresses: list[ConfigIngress] = []

@@ -1,4 +1,4 @@
-from pyflared import cloudflared
+from pyflared import commands
 
 
 async def test_binary() -> str | None:

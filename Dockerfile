@@ -26,7 +26,7 @@ RUN if [ "$USE_PREBUILT_WHEEL" = "true" ]; then \
         echo "✅ Valid artifact found."; \
     else \
         echo "🔸 MODE: BUILD FROM SOURCE"; \
-        uv pip install --system hatch; \
+        uv tool install hatch; \
         hatch build; \
     fi
 

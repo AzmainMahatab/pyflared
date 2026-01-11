@@ -154,6 +154,18 @@ class ProcessInstance(_ProcessWriter, AsyncIterable[ProcessOutput]):
                 await self.process.wait()
 
 
+async def de(a: asyncio.StreamReader, until: bytes | str | int | None):
+    match until:
+        case bytes():
+            await a.readuntil(until)
+        case str():
+            await a.readuntil(b(f"{until}"))
+        case int():
+            await a.read(until)
+        case _:
+            await a.readline()
+
+
 @dataclass
 class ProcessContext(AsyncContextManager[ProcessInstance]):
     """
@@ -167,9 +179,9 @@ class ProcessContext(AsyncContextManager[ProcessInstance]):
     stream_chunker: StreamChunker | None = None
 
     fixed_input: str | None = None
-    responders: list[Responder] | None = None
+    default_responders: list[Responder] | None = None
 
-    # Internal State
+    # Internal State # field is used for non-constructor properties
     process: asyncio.subprocess.Process | None = field(default=None, init=False)
     running_process: ProcessInstance | None = field(default=None, init=False)
     stack: contextlib.AsyncExitStack = field(default_factory=contextlib.AsyncExitStack, init=False)
@@ -204,7 +216,7 @@ class ProcessContext(AsyncContextManager[ProcessInstance]):
             stdin=asyncio.subprocess.PIPE
         )
 
-        stream_maker = _StreamMaker(process, chunker=self.stream_chunker, responders=self.responders)
+        stream_maker = _StreamMaker(process, chunker=self.stream_chunker, responders=self.default_responders)
         x1 = await stream_maker.stream_context(self.fixed_input)
         merged_stream = await self.stack.enter_async_context(x1.stream())
         self.running_process = ProcessInstance(process, merged_stream)
@@ -215,6 +227,24 @@ class ProcessContext(AsyncContextManager[ProcessInstance]):
             return
         await self.stack.aclose()
         await self.running_process.stop_gracefully()
+
+    async def raw_listener(self, *responders: Responder, ):
+        async with self as service:
+            async for event in service:
+                if responders:
+                    await service.write_from_responders(event.data, event.channel, responders)
+                # logger.debug(event)
+                # print(event.data)
+            return service.returncode
+
+    async def dedicated_listener(self, *responders: Responder, ):
+        async with self as service:
+            async for event in service:
+                if responders:
+                    await service.write_from_responders(event.data, event.channel, responders)
+                # logger.debug(event)
+                # print(event.data)
+            return service.returncode
 
     # `responders` is also a good place to add logger if needed
     async def start_background(self, responders: Iterable[Responder] | None = None) -> int | None:

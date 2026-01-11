@@ -80,8 +80,8 @@ type CmdTargetable[**P] = Callable[P, CmdArgs]
 # type CmdTargetable[**P] = Callable[P, CmdArgs]
 
 type Guard = Callable[[], AwaitableMaybe[bool]]
-type ChunkR = AwaitableMaybe[bytes | ChunkSignal]
-type StreamChunker = Callable[[asyncio.StreamReader, OutputChannel], ChunkR]
+type Chunk = AwaitableMaybe[bytes | ChunkSignal]
+type StreamChunker = Callable[[asyncio.StreamReader, OutputChannel], Chunk]
 type Response = bytes | str | None
 type Responder = Callable[[bytes, OutputChannel], AwaitableMaybe[Response]]
 

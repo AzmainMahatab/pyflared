@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import sys
 
 import typer
@@ -7,14 +8,25 @@ from pydantic import SecretStr
 from rich.console import Console
 from rich.panel import Panel
 
-import pyflared.cloudflared
-from pyflared.log.config2 import isolated_logging
+import pyflared.commands
+from pyflared.api.tunnel_manager import TunnelManager
+from pyflared.log.config import isolated_logging
 from pyflared.shared.types import Mappings, OutputChannel
 
-app = typer.Typer(help="MyCLI Tool")
-tunnels_app = typer.Typer(help="Manage tunnels")
-app.add_typer(tunnels_app, name="tunnel")  # tool tunnel
+app = typer.Typer(help="Pyflared, a tool that helps auto configuring cloudflared tunnels")
 
+
+@app.command()
+def version():
+    """Show version info."""
+    v: str = asyncio.run(pyflared.commands.version())
+    typer.echo(v)
+
+    # typer.Exit(code=1)
+
+
+tunnel = typer.Typer(help="Use for creating quick tunnels and dns mapped tunnel")
+app.add_typer(tunnel, name="tunnel")  # tool tunnel
 
 # def fx(record: logging.LogRecord):
 #     return True
@@ -26,23 +38,6 @@ app.add_typer(tunnels_app, name="tunnel")  # tool tunnel
 
 # console_handler.addFilter(fx2)
 # cl = ContextualLogger(console_handler)
-
-def output_result(url: str) -> None:
-    if sys.stdout.isatty():
-        # If a human is watching, show the pretty panel
-        display_tunnel_info(url)
-    else:
-        # If the user is piping output (e.g., > file.txt), just print the raw URL
-        print(url)
-
-
-@app.command()
-def version():
-    """Show version info."""
-    v = asyncio.run(pyflared.cloudflared.version())
-    typer.echo(v)
-
-    # typer.Exit(code=1)
 
 
 console = Console()
@@ -68,15 +63,32 @@ def display_tunnel_info(url: str) -> None:
     console.print(panel)
 
 
-@tunnels_app.command("quick")
-def quick_tunnel(
-        service: str,
-        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
-):
-    """Cloudflared QuickTunnels without domains."""
-    tunnel_process = pyflared.cloudflared.run_quick_tunnel(service)  # TODO: Fix it! we cannot run in bg and end
-    with isolated_logging(logging.DEBUG if verbose else logging.INFO):
-        asyncio.run(tunnel_process.start_background([print_tunnel_box]))
+def clean_url(url: str) -> str:
+    """
+    Removes 'http://' or 'https://' from the start,
+    AND removes a trailing '/' from the end.
+    """
+    # ^https?://  -> Matches http:// or https:// at the START
+    # |           -> OR
+    # /$          -> Matches a / at the END
+    return re.sub(r"^https?://|/$", "", url, flags=re.IGNORECASE)
+
+
+def normalize_if_local_url(url: str) -> str:
+    # 1. Always strip the trailing slash(es) first
+    url = url.rstrip("/")
+
+    # 2. Case: "8000" -> "http://localhost:8000"
+    # Checks if the entire string is just numbers
+    if url.isdigit():
+        return f"http://localhost:{url}"
+
+    # 3. Case: "localhost:8000" -> "http://localhost:8000"
+    if url.startswith("localhost"):
+        return f"http://{url}"
+
+    # 4. Default: Return as is (e.g. already has http://)
+    return url
 
 
 def parse_pair(value: str) -> tuple[str, str]:
@@ -84,35 +96,109 @@ def parse_pair(value: str) -> tuple[str, str]:
     if "=" not in value:
         raise typer.BadParameter(f"Format must be 'domain=service', got: {value}")
     domain, service = value.split("=", 1)
-    return domain, service.rstrip("/")  # TODO: support more cleanings
+    return clean_url(domain), normalize_if_local_url(service)
 
 
-def print_all(line: bytes, c: OutputChannel):
+def print_all(line: bytes, _: OutputChannel):
     # print(b.decode(), end="")
     print(line.decode())
 
 
 def print_tunnel_box(line: bytes, _: OutputChannel):
+    already_printed = False  # This is because for Links that are not backed by a service, clicking it emits the same line again each time
+
+    def output_result(url: str) -> None:
+        nonlocal already_printed
+        if already_printed:
+            return
+        if sys.stdout.isatty():
+            # If a human is watching, show the pretty panel
+            display_tunnel_info(url)
+        else:
+            # If the user is piping output (e.g., > file.txt), just print the raw URL
+            print(url)
+        already_printed = True
+
     output_result(line.decode().strip())
 
 
-@tunnels_app.command("mapped")
-def mapped_tunnel(
-        pair_args: list[str],
-        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs"),
+@tunnel.command("quick")
+def quick_tunnel(
+        service: str,
+        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
+):
+    """
+        Cloudflared QuickTunnels without domains.
+        Example:
+            $ pyflared tunnel quick example.com=localhost:8000 example2.com=localhost:1234
+    """
+    tunnel_process = pyflared.commands.run_quick_tunnel(service)  # TODO: Fix it! we cannot run in bg and end
+    with isolated_logging(logging.DEBUG if verbose else logging.INFO):
+        asyncio.run(tunnel_process.start_background([print_tunnel_box]))
+
+
+async def remove_orphans(
+        api_token: SecretStr
+):
+    tunnel_manager = TunnelManager(api_token.get_secret_value())
+    await tunnel_manager.remove_orphans()
+
+
+@tunnel.command("cleanup")
+def cleanup_orphans(
         api_token: SecretStr | None = typer.Option(
             None,
             envvar="CLOUDFLARE_API_TOKEN",
             parser=SecretStr,
-            help="Your secret API key.",  # Todo: specify token needed permission
-        )
+            help="CF API Token to manage tunnels and dns",  # Todo: specify token needed permission
+        ),
+        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
 ):
-    """Bind domains to services using domain=service format."""
+    with isolated_logging(logging.DEBUG if verbose else logging.INFO):
+        if not api_token:
+            # Securely prompt the user (hide input)
+            api_token = SecretStr(typer.prompt("Please enter your CF API token", hide_input=True))
+        asyncio.run(remove_orphans(api_token))
+
+
+@tunnel.command("mapped")
+def mapped_tunnel(
+        pair_args: list[str] = typer.Argument(
+            ...,
+            metavar="DOMAIN=SERVICE",  # Changes display in usage synopsis
+            help="List of mappings in the format 'domain=service'.",
+            show_default=False
+        ),
+        remove_orphan: bool = typer.Option(
+            True, "--remove-orphans", "-ro", help="Remove orphan tunnels"),
+        tunnel_name: str | None = typer.Option(
+            None,
+            help="Tunnel name",
+            show_default="hostname_YYYY-MM-DD_UTC..."
+        ),
+        api_token: SecretStr | None = typer.Option(
+            None,
+            envvar="CLOUDFLARE_API_TOKEN",
+            parser=SecretStr,
+            help="CF API Token to manage tunnels and dns",  # Todo: specify token needed permission
+        ),
+        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
+):
+    """
+        Establish mapped tunnels for one or multiple services.
+        You can pass multiple pairs separated by spaces.
+
+        Example:
+          $ pyflared tunnel mapped example.com=localhost:8000 example2.com=localhost:1234
+    """
+
     if not api_token:
         # Securely prompt the user (hide input)
-        api_token = typer.prompt("Please enter your API Key", hide_input=True)
+        api_token = SecretStr(typer.prompt("Please enter your CF API token", hide_input=True))
 
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
         pair_dict = Mappings(parse_pair(p) for p in pair_args)
-        tunnel = pyflared.cloudflared.run_dns_fixed_tunnel(pair_dict, api_token)  # TODO: pass remove_orphan
-        asyncio.run(tunnel.start_background([print_all]))
+        tunnel = pyflared.commands.run_dns_fixed_tunnel(
+            pair_dict, api_token=api_token.get_secret_value(), remove_orphan=remove_orphan,
+            tunnel_name=tunnel_name)  # TODO: pass remove_orphan
+        asyncio.run(tunnel.start_background())

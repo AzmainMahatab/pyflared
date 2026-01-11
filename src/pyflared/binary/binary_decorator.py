@@ -2,7 +2,7 @@ from functools import wraps
 from typing import Callable, Awaitable, overload
 
 from pyflared.binary.process import ProcessContext, FinalCmdFun
-from pyflared.shared.types import Guard, CmdArg, Responder, StreamChunker, CmdTargetable
+from pyflared.shared.types import Guard, CmdArg, Responder, StreamChunker, CmdTargetable, OutputChannel
 
 
 def responder_proxy(func: Responder) -> Responder:
@@ -33,7 +33,7 @@ class BinaryApp:
                     stream_chunker=stream_chunker,
                     fixed_input=fixed_input,
                     guards=guards,
-                    responders=responders,
+                    default_responders=responders,
                 )
                 return process_context
 
@@ -105,7 +105,15 @@ class BinaryApp:
     @classmethod
     async def concatenate_stdout(cls, process_context: ProcessContext) -> str:
         async with process_context as handle:
-            output_chunks: list[bytes] = []
+            sout_buffer: list[bytes] = []
+            err_buffer: list[bytes] = []
             async for chunk in handle:
-                output_chunks.append(chunk.data)
-            return b"".join(output_chunks).decode()  # type: ignore
+                if chunk.channel == OutputChannel.STDOUT:
+                    sout_buffer.append(chunk.data)
+                else:
+                    err_buffer.append(chunk.data)
+
+            if handle.returncode != 0:
+                raise RuntimeError(
+                    f"Command failed with exit code {handle.returncode}. Stderr: {b''.join(err_buffer).decode()}")
+            return b"".join(sout_buffer).decode()  # type: ignore
