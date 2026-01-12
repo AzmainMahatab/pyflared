@@ -1,8 +1,9 @@
+from collections.abc import Awaitable, Callable
 from functools import wraps
-from typing import Callable, Awaitable, overload
+from typing import overload
 
-from pyflared.binary.process import ProcessContext, FinalCmdFun
-from pyflared.shared.types import Guard, CmdArg, Responder, StreamChunker, CmdTargetable, OutputChannel
+from pyflared.binary.process import FinalCmdFun, ProcessContext
+from pyflared.shared.types import CmdArg, CmdTargetable, Guard, OutputChannel, Responder, StreamChunker
 
 
 def responder_proxy(func: Responder) -> Responder:
@@ -104,16 +105,34 @@ class BinaryApp:
 
     @classmethod
     async def concatenate_stdout(cls, process_context: ProcessContext) -> str:
+        sout_buffer: list[bytes] = []
+        err_buffer: list[bytes] = []
         async with process_context as handle:
-            sout_buffer: list[bytes] = []
-            err_buffer: list[bytes] = []
             async for chunk in handle:
                 if chunk.channel == OutputChannel.STDOUT:
                     sout_buffer.append(chunk.data)
                 else:
                     err_buffer.append(chunk.data)
 
-            if handle.returncode != 0:
-                raise RuntimeError(
-                    f"Command failed with exit code {handle.returncode}. Stderr: {b''.join(err_buffer).decode()}")
-            return b"".join(sout_buffer).decode()  # type: ignore
+        if handle.returncode != 0:
+            raise RuntimeError(
+                f"Command failed with exit code {handle.returncode}. Stderr: {b''.join(err_buffer).decode()}, Stdout: {b''.join(sout_buffer).decode()}")
+        return b"".join(sout_buffer).decode()
+
+    @classmethod
+    async def concatenate_stdout2(cls, process_context: ProcessContext) -> str:
+        sout_buffer: list[bytes] = []
+        err_buffer: list[bytes] = []
+
+        def f1(data: bytes, channel: OutputChannel):
+            if channel == OutputChannel.STDOUT:
+                sout_buffer.append(data)
+            else:
+                err_buffer.append(data)
+
+        returncode = await process_context.start_background([f1])
+
+        if returncode != 0:
+            raise RuntimeError(
+                f"Command failed with exit code {returncode}. Stderr: {b''.join(err_buffer).decode()}, Stdout: {b''.join(sout_buffer).decode()}")
+        return b"".join(sout_buffer).decode()
