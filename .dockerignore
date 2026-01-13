@@ -1,0 +1,6 @@
+.git
+.venv
+.hatch
+__pycache__
+.idea
+*.egg-info
