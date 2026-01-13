@@ -1,6 +1,6 @@
 from cloudflare import AsyncCloudflare
 
-from pyflared.shared.types import ZoneIds, AccountIds
+from pyflared.shared.types import AccountIds, ZoneIds
 
 
 async def fetch_zones_account_ids(async_cf: AsyncCloudflare) -> tuple[ZoneIds, AccountIds]:

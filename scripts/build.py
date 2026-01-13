@@ -1,13 +1,24 @@
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "rich",
+# ]
+# ///
+
 import glob
 import os
 import subprocess
 import sys
 from typing import NoReturn
 
+from rich.console import Console
+
+err_console = Console(stderr=True)
+
 
 def fail(msg: str, code: int = 1) -> NoReturn:
     """Print error and exit."""
-    print(f"❌ {msg}")
+    err_console.print(f"❌ {msg}")
     sys.exit(code)
 
 
@@ -16,14 +27,14 @@ def run_build() -> None:
     use_prebuilt: bool = os.environ.get("USE_PREBUILT_WHEEL", "false").lower() == "true"
 
     if use_prebuilt:
-        print("🔹 MODE: PRE-BUILT ARTIFACT DETECTED")
+        err_console.print("🔹 MODE: PRE-BUILT ARTIFACT DETECTED")
         # Check for existence of any wheel file
         if not glob.glob("dist/*.whl"):
             fail("No .whl files found in dist/.")
-        print("✅ Valid artifact found.")
+        err_console.print("✅ Valid artifact found.")
 
     else:
-        print("🔸 MODE: BUILD FROM SOURCE")
+        err_console.print("🔸 MODE: BUILD FROM SOURCE")
         try:
             subprocess.run(
                 [sys.executable, "-m", "hatch", "build"],

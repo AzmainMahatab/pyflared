@@ -28,7 +28,7 @@ class BinaryApp:
             def wrapper(*args: P.args, **kwargs: P.kwargs) -> ProcessContext:
                 cmd_args = func(*args, **kwargs)
 
-                process_context = ProcessContext(
+                return ProcessContext(
                     binary_path=self.binary_path,
                     cmd_args=cmd_args,
                     stream_chunker=stream_chunker,
@@ -36,7 +36,6 @@ class BinaryApp:
                     guards=guards,
                     default_responders=responders,
                 )
-                return process_context
 
             return wrapper
 
@@ -107,30 +106,14 @@ class BinaryApp:
     async def concatenate_stdout(cls, process_context: ProcessContext) -> str:
         sout_buffer: list[bytes] = []
         err_buffer: list[bytes] = []
-        async with process_context as handle:
-            async for chunk in handle:
-                if chunk.channel == OutputChannel.STDOUT:
-                    sout_buffer.append(chunk.data)
-                else:
-                    err_buffer.append(chunk.data)
 
-        if handle.returncode != 0:
-            raise RuntimeError(
-                f"Command failed with exit code {handle.returncode}. Stderr: {b''.join(err_buffer).decode()}, Stdout: {b''.join(sout_buffer).decode()}")
-        return b"".join(sout_buffer).decode()
-
-    @classmethod
-    async def concatenate_stdout2(cls, process_context: ProcessContext) -> str:
-        sout_buffer: list[bytes] = []
-        err_buffer: list[bytes] = []
-
-        def f1(data: bytes, channel: OutputChannel):
+        def concatenate(data: bytes, channel: OutputChannel):
             if channel == OutputChannel.STDOUT:
                 sout_buffer.append(data)
             else:
                 err_buffer.append(data)
 
-        returncode = await process_context.start_background([f1])
+        returncode = await process_context.start_background([concatenate])
 
         if returncode != 0:
             raise RuntimeError(

@@ -1,21 +1,31 @@
 import asyncio
 import contextlib
+from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
-from typing import AsyncIterable, AsyncIterator, AsyncContextManager, Iterable, Callable, Self
+from typing import Self
 
 import aiostream
 from beartype.door import die_if_unbearable
+from loguru import logger
 
-from pyflared.shared.types import OutputChannel, StreamChunker, Responder, CmdArg, CmdArgs, Guard, \
-    ProcessOutput, AwaitableMaybe, ChunkSignal, CommandError
+from pyflared.shared.types import (
+    AwaitableMaybe,
+    ChunkSignal,
+    CmdArg,
+    CmdArgs,
+    CommandError,
+    Guard,
+    OutputChannel,
+    ProcessOutput,
+    Responder,
+    StreamChunker,
+)
 from pyflared.utils.async_helper import safe_awaiter
 
 type FinalCmdFun[**P] = Callable[P, ProcessContext]
 
 type Converter[R] = Callable[[ProcessContext], R]
 type Mutator = Callable[[ProcessOutput], AwaitableMaybe[bytes]]
-
-from loguru import logger
 
 
 @dataclass
@@ -86,10 +96,8 @@ class _StreamMaker(_ProcessWriter):
 
         # Helper to attach responders/transformers to a raw stream
         def attach_channel(raw_stream: asyncio.StreamReader, channel: OutputChannel) -> aiostream.core.Stream:
-            if self.chunker:
-                source = reader_chunker(raw_stream, channel, self.chunker)
-            else:
-                source = raw_stream
+
+            source = reader_chunker(raw_stream, channel, self.chunker) if self.chunker else raw_stream
 
             # 2. Map: Convert bytes -> ProcessOutput AND handle responders
             return aiostream.stream.map(source, channel_tagger(channel))
@@ -101,8 +109,7 @@ class _StreamMaker(_ProcessWriter):
             sources.append(attach_channel(self.process.stderr, OutputChannel.STDERR))
 
         # 3. Merge streams
-        merged = aiostream.stream.merge(*sources)
-        return merged
+        return aiostream.stream.merge(*sources)
 
 
 @dataclass()
@@ -132,9 +139,13 @@ class ProcessInstance(_ProcessWriter, AsyncIterable[ProcessOutput]):
                 await target.write(output.data)
 
     async def drain_wait(self) -> int:
-        """Drains all output until the process completes."""
+        """Drains all output and waits until the process completes."""
         async for _ in self:
             pass
+        return await self.process.wait()
+
+    async def wait(self) -> int | None:
+        """Waits until the process completes."""
         return await self.process.wait()
 
     @property
@@ -146,28 +157,19 @@ class ProcessInstance(_ProcessWriter, AsyncIterable[ProcessOutput]):
             if self.process.stdin:
                 self.process.stdin.close()
 
-            self.process.terminate()
             try:
+                self.process.terminate()
                 await asyncio.wait_for(self.process.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
+            except ProcessLookupError:
+                # Process already dead
+                pass
+            except TimeoutError:
                 self.process.kill()
                 await self.process.wait()
 
 
-async def de(a: asyncio.StreamReader, until: bytes | str | int | None):
-    match until:
-        case bytes():
-            await a.readuntil(until)
-        case str():
-            await a.readuntil(b(f"{until}"))
-        case int():
-            await a.read(until)
-        case _:
-            await a.readline()
-
-
 @dataclass
-class ProcessContext(AsyncContextManager[ProcessInstance]):
+class ProcessContext(contextlib.AbstractAsyncContextManager[ProcessInstance]):
     """
     Manages the lifecycle of a subprocess and its associated IO streams.
     """
@@ -228,24 +230,6 @@ class ProcessContext(AsyncContextManager[ProcessInstance]):
         await self.stack.aclose()
         await self.running_process.stop_gracefully()
 
-    async def raw_listener(self, *responders: Responder, ):
-        async with self as service:
-            async for event in service:
-                if responders:
-                    await service.write_from_responders(event.data, event.channel, responders)
-                # logger.debug(event)
-                # print(event.data)
-            return service.returncode
-
-    async def dedicated_listener(self, *responders: Responder, ):
-        async with self as service:
-            async for event in service:
-                if responders:
-                    await service.write_from_responders(event.data, event.channel, responders)
-                # logger.debug(event)
-                # print(event.data)
-            return service.returncode
-
     # `responders` is also a good place to add logger if needed
     async def start_background(self, responders: Iterable[Responder] | None = None) -> int | None:
         async with self as service:
@@ -253,5 +237,4 @@ class ProcessContext(AsyncContextManager[ProcessInstance]):
                 if responders:
                     await service.write_from_responders(event.data, event.channel, responders)
                 # logger.debug(event)
-                # print(event.data)
-            return service.returncode
+            return await service.wait()

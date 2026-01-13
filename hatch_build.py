@@ -1,19 +1,25 @@
 import hashlib
+import logging
 import platform
 import shutil
 import tarfile
+from abc import ABC, abstractmethod
 from functools import cached_property
 from pathlib import Path
 from typing import Any
 
-import requests
+import httpx
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 from hatchling.metadata.plugin.interface import MetadataHookInterface
 from klepto.archives import dir_archive
 from packaging.tags import platform_tags
+from rich.console import Console
+
+logger = logging.getLogger(__name__)
+console = Console(stderr=True)
 
 base_url = "https://github.com/cloudflare/cloudflared/releases/download"
-api = "https://api.github.com/repos/cloudflare/cloudflared/releases/latest"
+cloudflared_gh_api = "https://api.github.com/repos/cloudflare/cloudflared/releases/latest"
 
 tgz = ".tar.gz"
 
@@ -32,7 +38,7 @@ class CloudFlareBinary:
             "aarch64": "arm64",
             "armv7l": "arm",
         }
-        # Use the mapped value, or default to the original if not found
+        # Use the mapped value or default to the original if not found
         arch = arch_map.get(arch, arch)
         # --- FIX END ---
 
@@ -53,39 +59,35 @@ class CloudFlareBinary:
 _binary_version = "binary_version"
 
 
-class _BuildShare:
+class BuildShareMixin(ABC):
+    """
+    Mixin that handles build directory logic.
+    Requires the consumer to provide a 'root' attribute.
+    """
 
-    def __init_subclass__(cls, **kwargs):
-        super().__init_subclass__(**kwargs)
-
-        # The constraint: The child class (cls) MUST be a subclass of
-        # either MetadataHookInterface OR BuildHookInterface.
-        required_parents = (MetadataHookInterface, BuildHookInterface)
-
-        if not issubclass(cls, required_parents):
-            required_names = " or ".join(c.__name__ for c in required_parents)
-
-            raise TypeError(
-                f"'{cls.__name__}' cannot inherit from {__class__.__name__} unless it also inherits from {required_names}."
-            )
+    @property
+    @abstractmethod
+    def root(self) -> Path | str:
+        """The root directory for the project."""
+        ...
 
     @cached_property
-    def build_dir(self):
-        return Path(self.root) / ".hatch"  # type: ignore # ensured by __init_subclass__
+    def build_dir(self) -> Path:
+        return Path(self.root) / ".hatch"
 
     @cached_property
-    def download_dir(self):
+    def download_dir(self) -> Path:
         return self.build_dir / "downloads"
 
     @cached_property
-    def binary_dir(self):
+    def binary_dir(self) -> Path:
         return self.build_dir / "binary"
 
     @cached_property
-    def cache_dir(self):
+    def cache_dir(self) -> Path:
         return self.build_dir / "cache"
 
-    def ensure_dirs(self):
+    def ensure_dirs(self) -> None:
         self.build_dir.mkdir(parents=True, exist_ok=True)
         self.download_dir.mkdir(parents=True, exist_ok=True)
         self.binary_dir.mkdir(parents=True, exist_ok=True)
@@ -94,15 +96,26 @@ class _BuildShare:
     def cache_db(self):
         return dir_archive(self.cache_dir, cached=False)
 
+    client = httpx.Client(follow_redirects=True)
 
-class MetadataHook(MetadataHookInterface, _BuildShare):
+
+class MetadataHook(MetadataHookInterface, BuildShareMixin):
+
+    @cached_property
+    def file_version(self) -> str:
+        version_file = Path(self.root) / "cloudflared.version"
+
+        if version_file.is_file() and (content := version_file.read_text("utf-8").strip()):
+            return content
+
+        return "latest"
 
     @cached_property
     def binary_version(self) -> str:
-        version = self.config.get(_binary_version, "latest")
+        version = self.config.get(_binary_version, self.file_version)
 
         if version == "latest":
-            response = requests.get(api)
+            response = self.client.get(cloudflared_gh_api)
             response.raise_for_status()
             version = response.json()["tag_name"]
 
@@ -111,15 +124,14 @@ class MetadataHook(MetadataHookInterface, _BuildShare):
 
     def update(self, metadata):
         self.ensure_dirs()
-        # print(f"R:{self.build_dir}")
         wrapper_version = self.config.get("wrapper_version", 0)
-        # print(f"Wrapper version: {wrapper_version}")  # Change to logger
+        logger.info(f"Wrapper version: {wrapper_version}")  # Change to logger
 
         metadata["version"] = f"{self.binary_version}.{wrapper_version}"
-        # print(f"Evaluated version: {metadata["version"]}")
+        logger.info(f"Pyflared version: {metadata["version"]}")
 
 
-class BuildHook(BuildHookInterface, _BuildShare):
+class BuildHook(BuildHookInterface, BuildShareMixin):
     @cached_property
     def cloudflared_binary(self):
         binary_version = self.cache_db[_binary_version]
@@ -138,7 +150,7 @@ class BuildHook(BuildHookInterface, _BuildShare):
 
     def _stage_downloads(self):
 
-        key = hashlib.md5(self.cloudflared_binary.link.encode()).hexdigest()
+        key = hashlib.md5(self.cloudflared_binary.link.encode(), usedforsecurity=False).hexdigest()
 
         # No 'with' block needed. db.get() reads directly from the disk.
         if old_etag := self.cache_db.get(key):
@@ -147,16 +159,15 @@ class BuildHook(BuildHookInterface, _BuildShare):
             headers = {}
 
         # Download file
-        response = requests.get(self.cloudflared_binary.link, headers=headers, stream=True)
+        response = self.client.get(self.cloudflared_binary.link, headers=headers)
 
-        if response.status_code == 304:
-            pass
-            # print(f"Reusing cached {self.cloudflared_binary.asset_name}")
+        if response.status_code == httpx.codes.NOT_MODIFIED:
+            console.print(f"Reusing cached {self.cloudflared_binary.asset_name}")
         else:
             response.raise_for_status()
             download_file = self.download_dir / self.cloudflared_binary.asset_name
             with open(download_file, "wb") as file:
-                # print(f"Downloading {self.cloudflared_binary.asset_name}")
+                logger.info(f"Downloading {self.cloudflared_binary.asset_name}")
                 file.write(response.content)
 
             # Save: Writes happen immediately because cached=False
@@ -167,7 +178,7 @@ class BuildHook(BuildHookInterface, _BuildShare):
         downloaded_file = self.download_dir / self.cloudflared_binary.asset_name
         if self.cloudflared_binary.is_tgz:
             with tarfile.open(downloaded_file) as tar:
-                # print(f"Extracting {self.cloudflared_binary.asset_name}")
+                logger.info(f"Extracting {self.cloudflared_binary.asset_name}")
                 tar.extractall(self.binary_dir)
         else:
             final_binary = self.binary_dir / self.cloudflared_binary.final_binary_name
@@ -183,7 +194,6 @@ class BuildHook(BuildHookInterface, _BuildShare):
     def clean(self, versions: list[str]) -> None:
         try:
             shutil.rmtree(self.build_dir)
-            # print(f"Cleaned build directory")
+            logger.info("Cleaned build directory")
         except FileNotFoundError:
-            pass
-            # print(f"Build directory not found, nothing to clean")
+            logger.info("Build directory not found, nothing to clean")

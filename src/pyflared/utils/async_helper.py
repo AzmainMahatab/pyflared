@@ -1,5 +1,6 @@
 import inspect
-from typing import overload, Awaitable
+from collections.abc import Awaitable
+from typing import overload
 
 
 @overload

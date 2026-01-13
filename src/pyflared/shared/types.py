@@ -1,9 +1,9 @@
 import asyncio
 import os
 from collections import defaultdict
-from collections.abc import Iterable, Awaitable
+from collections.abc import Awaitable, Callable, Iterable
 from enum import StrEnum, auto
-from typing import NamedTuple, Callable
+from typing import NamedTuple
 
 from cloudflare.types.dns import record_batch_params
 from cloudflare.types.zones import Zone

@@ -1,7 +1,7 @@
 import logging
 import sys
 from pathlib import Path
-from typing import Final, TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from loguru import logger
 from platformdirs import user_log_dir

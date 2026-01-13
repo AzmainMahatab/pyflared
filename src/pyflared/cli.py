@@ -9,9 +9,12 @@ from rich.console import Console
 from rich.panel import Panel
 
 import pyflared.commands
-from pyflared.api.tunnel_manager import TunnelManager
+from pyflared import commands
+from pyflared.api_sdk.tunnel_manager import TunnelManager
 from pyflared.log.config import isolated_logging
 from pyflared.shared.types import Mappings, OutputChannel
+
+err_console = Console(stderr=True)
 
 app = typer.Typer(help="Pyflared, a tool that helps auto configuring cloudflared tunnels")
 
@@ -25,22 +28,8 @@ def version():
     # typer.Exit(code=1)
 
 
-tunnel = typer.Typer(help="Use for creating quick tunnels and dns mapped tunnel")
-app.add_typer(tunnel, name="tunnel")  # tool tunnel
-
-# def fx(record: logging.LogRecord):
-#     return True
-#
-#
-# def fx2(record: int):
-#     return True
-
-
-# console_handler.addFilter(fx2)
-# cl = ContextualLogger(console_handler)
-
-
-console = Console()
+tunnel_subcommand = typer.Typer(help="Use for creating quick tunnels and dns mapped tunnel")
+app.add_typer(tunnel_subcommand, name="tunnel")  # tool tunnel
 
 
 def display_tunnel_info(url: str) -> None:
@@ -60,10 +49,10 @@ def display_tunnel_info(url: str) -> None:
         padding=(1, 2)  # Add some breathing room inside the box
     )
 
-    console.print(panel)
+    err_console.print(panel)
 
 
-def clean_url(url: str) -> str:
+def clean_domain(url: str) -> str:
     """
     Removes 'http://' or 'https://' from the start,
     AND removes a trailing '/' from the end.
@@ -96,12 +85,11 @@ def parse_pair(value: str) -> tuple[str, str]:
     if "=" not in value:
         raise typer.BadParameter(f"Format must be 'domain=service', got: {value}")
     domain, service = value.split("=", 1)
-    return clean_url(domain), normalize_if_local_url(service)
+    return clean_domain(domain), normalize_if_local_url(service)
 
 
 def print_all(line: bytes, _: OutputChannel):
-    # print(b.decode(), end="")
-    print(line.decode())
+    err_console.print(line.decode())
 
 
 def print_tunnel_box(line: bytes, _: OutputChannel):
@@ -116,13 +104,14 @@ def print_tunnel_box(line: bytes, _: OutputChannel):
             display_tunnel_info(url)
         else:
             # If the user is piping output (e.g., > file.txt), just print the raw URL
-            print(url)
+            err_console.print(url)
+            # print(url)
         already_printed = True
 
     output_result(line.decode().strip())
 
 
-@tunnel.command("quick")
+@tunnel_subcommand.command("quick")
 def quick_tunnel(
         service: str,
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
@@ -144,13 +133,13 @@ async def remove_orphans(
     await tunnel_manager.remove_orphans()
 
 
-@tunnel.command("cleanup")
+@tunnel_subcommand.command("cleanup")
 def cleanup_orphans(
         api_token: SecretStr | None = typer.Option(
             None,
             envvar="CLOUDFLARE_API_TOKEN",
             parser=SecretStr,
-            help="CF API Token to manage tunnels and dns",  # Todo: specify token needed permission
+            help="CF API Token to manage tunnels and dns",  # TODO: specify token needed permission
         ),
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
 ):
@@ -161,7 +150,23 @@ def cleanup_orphans(
         asyncio.run(remove_orphans(api_token))
 
 
-@tunnel.command("mapped")
+all_tunnels_connected = b"INF Registered tunnel connection connIndex=3"
+
+
+def pretty_tunnel_status(line: bytes, _: OutputChannel):
+    if commands.starting_tunnel in line:
+        err_console.print("Starting Tunnel...")
+    elif b"ERR" in line:
+        err_console.print(f"[bold red]{line.decode()}[/bold red]")
+    # TODO: Add other Index check
+    # TODO: Add connection config
+    elif all_tunnels_connected in line:
+        # err_console.print(line)
+        err_console.print(
+            "[green]Tunnel status is healthy, with all 4 connections[/green]")  # TODO: Add locations and protocols
+
+
+@tunnel_subcommand.command("mapped")
 def mapped_tunnel(
         pair_args: list[str] = typer.Argument(
             ...,
@@ -180,7 +185,7 @@ def mapped_tunnel(
             None,
             envvar="CLOUDFLARE_API_TOKEN",
             parser=SecretStr,
-            help="CF API Token to manage tunnels and dns",  # Todo: specify token needed permission
+            help="CF API Token to manage tunnels and dns",  # TODO: specify token needed permission
         ),
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
 ):
@@ -201,4 +206,4 @@ def mapped_tunnel(
         tunnel = pyflared.commands.run_dns_fixed_tunnel(
             pair_dict, api_token=api_token.get_secret_value(), remove_orphan=remove_orphan,
             tunnel_name=tunnel_name)  # TODO: pass remove_orphan
-        asyncio.run(tunnel.start_background())
+        asyncio.run(tunnel.start_background([pretty_tunnel_status]))

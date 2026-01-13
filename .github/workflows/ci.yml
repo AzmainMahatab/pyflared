@@ -1,6 +1,8 @@
-name: ci.yml
+name: ci
 on:
-
+  pull_request:
+    branches:
+      - main
 
 jobs:
   test:
@@ -9,7 +11,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        os: [ubuntu-latest, windows-latest, macos-latest]
 
     steps:
       # 1. Bring your code onto the runner
@@ -21,5 +23,3 @@ jobs:
 
       - name: Run tests
         run: hatch test -- -s
-
-

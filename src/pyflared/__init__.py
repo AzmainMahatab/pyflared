@@ -22,4 +22,4 @@ logger.add(
 )
 
 # Apply monkey patch till my PR is accepted.
-import pyflared.sdk.monkey_patch
+import pyflared.api_sdk.monkey_patch  # noqa: F401

@@ -1,14 +1,12 @@
-from typing import Optional
-
 from cloudflare._base_client import PageInfo
-from cloudflare.pagination import SyncV4PagePaginationArray, AsyncV4PagePaginationArray, V4PagePaginationArrayResultInfo
+from cloudflare.pagination import AsyncV4PagePaginationArray, SyncV4PagePaginationArray, V4PagePaginationArrayResultInfo
 from loguru import logger
 
 # --- 1. Patch the Data Model (so Pydantic reads 'total_pages') ---
 # We add the missing type annotations and rebuild the model.
-V4PagePaginationArrayResultInfo.__annotations__["total_pages"] = Optional[int]
-V4PagePaginationArrayResultInfo.__annotations__["total_count"] = Optional[int]
-V4PagePaginationArrayResultInfo.__annotations__["count"] = Optional[int]
+V4PagePaginationArrayResultInfo.__annotations__["total_pages"] = int | None
+V4PagePaginationArrayResultInfo.__annotations__["total_count"] = int | None
+V4PagePaginationArrayResultInfo.__annotations__["count"] = int | None
 
 # Force Pydantic to re-compile the model with the new fields
 # (This works for Pydantic v2, which the SDK uses)
@@ -21,7 +19,7 @@ except AttributeError:
 
 
 # --- 2. Define the Fixed Logic ---
-def _fixed_next_page_info(self) -> Optional[PageInfo]:
+def _fixed_next_page_info(self) -> PageInfo | None:
     current_page = self.result_info.page
     total_pages = getattr(self.result_info, "total_pages", None)  # Safe access
 

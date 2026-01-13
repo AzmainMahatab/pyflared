@@ -4,20 +4,20 @@ import os
 import pathlib
 import re
 import stat
+from collections.abc import Iterator
 from contextlib import ExitStack
 from functools import cache, cached_property
-from importlib.resources import files, as_file
+from importlib.resources import as_file, files
 from importlib.resources.abc import Traversable
 from pathlib import Path
-from typing import Iterator
 
 from loguru import logger
 
-from pyflared.api.tunnel_manager import TunnelManager
+from pyflared.api_sdk.tunnel_manager import TunnelManager
 from pyflared.binary.binary_decorator import BinaryApp
-from pyflared.shared.types import Mappings, Chunk, ChunkSignal, OutputChannel
+from pyflared.shared.types import Chunk, ChunkSignal, Mappings, OutputChannel
 
-__all__ = ["run_token_tunnel", "run_quick_tunnel", "version"]
+__all__ = ["run_quick_tunnel", "run_token_tunnel", "version"]
 
 
 @cached_property
@@ -27,7 +27,10 @@ def _bin_dir():
     # return files('myapp.templates')
 
 
-_binary_filename = "cloudflared" + ".exe" if os.name == "nt" else ""
+_binary_filename = f"cloudflared{".exe" if os.name == "nt" else ""}"
+
+
+# + (".exe" if os.name == "nt" else "")
 
 
 def _ensure_posix_executable(path: pathlib.Path) -> None:
@@ -48,6 +51,7 @@ def _get_files_recursively(entry: Traversable) -> Iterator[Traversable]:
         yield entry
 
 
+# noinspection PyAbstractClass
 _file_manager = ExitStack()
 atexit.register(_file_manager.close)
 
@@ -87,17 +91,11 @@ def version(): return "version"
 
 
 quickflare_url_pattern: re.Pattern[bytes] = re.compile(rb'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)')
-quickflare_url_pattern3: re.Pattern[bytes] = re.compile(rb'(Starting tunnel tunnelID=0733b006-8a87-4be8-8618-91c1e1fb429f)')
 
 
-async def log_line(b: bytes):
-    pass
-
-
-async def filter_trycloudflare_url(stream_reader: asyncio.StreamReader, output_channel: OutputChannel) -> Chunk:
+async def filter_trycloudflare_url(stream_reader: asyncio.StreamReader, _: OutputChannel) -> Chunk:
     line_data = await stream_reader.readline()
     logger.opt(raw=True).debug(line_data.decode())
-    await log_line(line_data)
     if match := quickflare_url_pattern.search(line_data):
         return match.group(1)
     return ChunkSignal.SKIP
@@ -117,16 +115,35 @@ def confirm_token() -> bool:
     return True
 
 
-async def log_all(stream_reader: asyncio.StreamReader, output_channel: OutputChannel) -> Chunk:
+async def log_all_n_skip(stream_reader: asyncio.StreamReader, _: OutputChannel) -> Chunk:
     line_data = await stream_reader.readline()
     logger.opt(raw=True).debug(line_data.decode())
-    await log_line(line_data)
     return ChunkSignal.SKIP
 
+
 x = "Registered tunnel connection connIndex="
-@cloudflared.daemon(stream_chunker=log_all)
+
+starting_tunnel = b"Starting tunnel tunnelID="
+config_pattern = b"Updated to new configuration config="
+tunnel_connection_pattern = b"connIndex="
+
+patterns = (starting_tunnel, config_pattern, tunnel_connection_pattern)
+
+# re.escape ensures special characters (like . or *) don't break the regex
+combined_pattern = re.compile(b"|".join(re.escape(p) for p in patterns))
+
+
+async def fixed_tunnel_tracing(stream_reader: asyncio.StreamReader, _: OutputChannel) -> Chunk:
+    line_data = await stream_reader.readline()
+    logger.opt(raw=True).debug(line_data.decode())
+    if starting_tunnel in line_data or tunnel_connection_pattern in line_data or config_pattern in line_data:
+        return line_data
+    return ChunkSignal.SKIP
+
+
+@cloudflared.daemon(stream_chunker=fixed_tunnel_tracing)
 async def run_dns_fixed_tunnel(
-        mappings: Mappings, api_token: str | None = None,
+        mappings: Mappings, api_token: str | None = None, *,
         remove_orphan: bool = True, tunnel_name: str | None = None):
     tunnel_manager = TunnelManager(api_token)
     if remove_orphan:
