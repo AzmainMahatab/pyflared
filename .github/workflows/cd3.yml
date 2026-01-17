@@ -20,6 +20,22 @@ jobs:
       - uses: googleapis/release-please-action@v4
         id: release
 
+  build-sdist:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    name: Build Sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pypa/hatch@install
+
+      - name: Build sdist
+        run: hatch build -t sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+
   # JOB 2: WHEEL BUILDER (Matrix)
   build-wheels:
     needs: release-please
@@ -52,17 +68,17 @@ jobs:
     steps:
       - uses: actions/download-artifact@v7
         with:
-          pattern: wheels-*
           path: dist
           merge-multiple: true
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: dist/*
 
       #Publish is suppressed for now
       #      - name: Publish to PyPI
       #        uses: pypa/gh-action-pypi-publish@release/v1
       #        # No password needed if using Trusted Publishing (OIDC)
 
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.release-please.outputs.tag_name }}
-          files: dist/*.whl
