@@ -1,0 +1,84 @@
+name: Release-Please
+
+on:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write # REQUIRED for PyPI Trusted Publishing
+
+jobs:
+  # JOB 1: RELEASE MANAGER
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+
+  build-sdist:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    name: Build Sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pypa/hatch@install
+
+      - name: Build sdist
+        run: hatch build -t sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+
+  # JOB 2: WHEEL BUILDER (Matrix)
+  build-wheels:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    name: Build Wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest ]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pypa/hatch@install
+
+      - name: Build Wheel
+        run: hatch build -t wheel
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: wheels-${{ matrix.os }}
+          path: dist/*.whl
+
+  # JOB 3: PUBLISHER (PyPI + GitHub)
+  publish:
+    needs: [ release-please, build-wheels ]
+    if: ${{ needs.release-please.outputs.release_created }}
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pyflared  # <--- CHECK THIS NAME
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: dist/*
+
+      #Publish is suppressed for now
+      #      - name: Publish to PyPI
+      #        uses: pypa/gh-action-pypi-publish@release/v1
+      #        # No password needed if using Trusted Publishing (OIDC)
+

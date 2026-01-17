@@ -1,0 +1,118 @@
+name: CD
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/pyflared/__about__.py'
+
+jobs:
+  build-sdist:
+    name: Build SDist
+    runs-on: ubuntu-latest
+    # Define the output variable that other jobs can see
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pypa/hatch@install
+
+      # 1. Capture the version here
+      - name: Get Version
+        id: get-version
+        run: echo "version=$(hatch version)" >> $GITHUB_OUTPUT
+
+      - run: hatch build -t sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+
+  build-wheels:
+    name: Build Wheels (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pypa/hatch@install
+      - run: hatch build -t wheel
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}
+          path: dist/*.whl
+
+  publish:
+    name: Publish & Docker
+    # We wait for build-sdist to finish so we can read its output
+    needs: [ build-sdist, build-wheels ]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # 2. Download EVERYTHING (Sdist + All Wheels)
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+      # 3. Create GitHub Release
+      # NO Hatch install needed. We use the version passed from job 1.
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.build-sdist.outputs.version }}
+          name: v${{ needs.build-sdist.outputs.version }}
+          files: dist/*
+          generate_release_notes: true
+
+      # 4. Docker Setup
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            <YOUR_DOCKERHUB_USERNAME>/pyflared
+            ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ needs.build-sdist.outputs.version }}
+            type=raw,value=latest
+
+      - name: Build and Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            USE_PREBUILT_WHEEL=true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

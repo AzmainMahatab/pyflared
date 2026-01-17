@@ -1,0 +1,153 @@
+name: cd
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'cloudflared.version'
+
+jobs:
+  build-sdist:
+    name: Build source distribution
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Bring your code onto the runner
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Hatch
+        uses: pypa/hatch@install
+
+      # The '-t sdist' flag is crucial. It tells Hatch to ONLY build sdist.
+      - name: Build sdist
+        run: hatch build -t sdist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+
+  build-wheels:
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+    steps:
+      # 1. Bring your code onto the runner
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Hatch
+        uses: pypa/hatch@install
+
+      # The '-t wheel' flag is crucial. It tells Hatch to ONLY build wheels.
+      - name: Build wheel
+        run: hatch build -t wheel
+
+      - uses: actions/upload-artifact@v4
+        with:
+          # Unique names prevent overwriting in temporary storage
+          name: dist-wheels-${{ matrix.os }}
+          path: dist/*.whl
+
+  publish:
+    name: Publish to PyPI
+    needs: [ build-sdist, build-wheels ] # Wait for BOTH build jobs
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          # This pattern grabs 'dist-sdist', 'dist-wheels-windows-latest', etc.
+          pattern: dist-*
+          # Merges them all into one flat 'dist' folder
+          merge-multiple: true
+          path: dist
+      - name: Make Release
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+      - name: Publish to Docker registry, GHCR and Docker Hub
+
+#  publish-to-testpypi: # Fix
+#    name: Publish to TestPyPI
+#    needs: [ build-sdist,build-wheels ]
+#    runs-on: ubuntu-latest
+#    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+#
+#    environment:
+#      name: testpypi
+#      url: https://test.pypi.org/p/pyflared
+#
+#    permissions:
+#      id-token: write  # IMPORTANT: mandatory for trusted publishing
+#
+#    steps:
+#      - name: Download all the dists
+#        uses: actions/download-artifact@v4
+#        with:
+#          name: python-package-distributions
+#          path: dist/
+#
+#      - name: Publish distribution to TestPyPI
+#        uses: pypa/gh-action-pypi-publish@release/v1
+#        with:
+#          repository-url: https://test.pypi.org/legacy/
+#          skip-existing: true
+#
+#
+#
+#  publish-to-pypi:
+#    name: Publish to PyPI
+#    needs: build
+#    runs-on: ubuntu-latest
+#    if: startsWith(github.ref, 'refs/tags/')  # Only publish on tag pushes
+#
+#    environment:
+#      name: pypi
+#      url: https://pypi.org/p/pyflared
+#
+#    permissions:
+#      id-token: write  # IMPORTANT: mandatory for trusted publishing
+#
+#    steps:
+#      - name: Download all the dists
+#        uses: actions/download-artifact@v4
+#        with:
+#          name: python-package-distributions
+#          path: dist/
+#
+#      - name: Publish distribution to PyPI
+#        uses: pypa/gh-action-pypi-publish@release/v1
+#
+#  publish:
+#    name: Publish to PyPI
+#    needs: build_wheels  # <--- CRITICAL: Waits for all matrix jobs to pass
+#    runs-on: ubuntu-latest
+#    permissions:
+#      id-token: write  # Required for Trusted Publishing (OIDC)
+#
+#    steps:
+#      - name: Download all artifacts
+#        uses: actions/download-artifact@v4
+#        with:
+#          # v4 feature: This downloads all artifacts matching the pattern
+#          pattern: wheels-*
+#          # v4 feature: This merges them all into one 'dist' folder automatically
+#          merge-multiple: true
+#          path: dist
+#
+#      - name: Publish to PyPI
+#        uses: pypa/gh-action-pypi-publish@release/v1
+#        with:
+#          # It automatically finds files in 'dist/' by default
+#          # No password needed if you configure PyPI Trusted Publishing
+#          packages-dir: dist/
+

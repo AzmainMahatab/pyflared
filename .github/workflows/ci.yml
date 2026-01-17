@@ -1,0 +1,26 @@
+name: ci
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Hatch
+        uses: pypa/hatch@install
+
+      - name: Run tests
+        run: hatch test -- -s

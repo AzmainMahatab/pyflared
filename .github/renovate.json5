@@ -1,0 +1,60 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:base"
+  ],
+  // Force Renovate to use 'fix:' and 'feat:' prefixes,
+  // even if the repo history is empty.
+  "semanticCommits": "enabled",
+  // --- 1. AUTOMATION SETTINGS ---
+  "automerge": true,
+  "platformAutomerge": true,
+  "automergeStrategy": "squash",
+  "rebaseWhen": "behind-base-branch",
+  "stopUpdatingLabel": "renovate-stop",
+  // --- 2. CUSTOM MANAGERS ---
+  "customManagers": [
+    {
+      "customType": "regex",
+      "fileMatch": [
+        "^cloudflared\\.version$"
+      ],
+      "matchStrings": [
+        "^(?<currentValue>\\d{4}\\.\\d+\\.\\d+)$"
+      ],
+      "datasourceTemplate": "github-releases",
+      "depNameTemplate": "cloudflare/cloudflared",
+      "versioningTemplate": "loose"
+    }
+  ],
+  // --- 3. PACKAGE RULES ---
+  "packageRules": [
+    // RULE 1: Global Silence (Default to chore)
+    {
+      "matchPackagePatterns": [
+        "*"
+      ],
+      "semanticCommitType": "chore"
+    },
+    // RULE 2: Cloudflare Exception
+    {
+      "matchDepNames": [
+        "cloudflare/cloudflared"
+      ],
+      // "fix" = Patch, "feat" = Minor
+      "semanticCommitType": "fix",
+      "groupName": null
+    },
+    // RULE 3: Noise Reduction
+    {
+      "matchUpdateTypes": [
+        "minor",
+        "patch"
+      ],
+      "excludeDepNames": [
+        "cloudflare/cloudflared"
+      ],
+      "groupName": "all non-major dependencies"
+    }
+  ]
+}
