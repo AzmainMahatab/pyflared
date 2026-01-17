@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 import pyflared._commands
-from pyflared import _commands
+from pyflared import _commands, _patterns
 from pyflared.api_sdk.tunnel_manager import TunnelManager
 from pyflared.log.config import isolated_logging
 from pyflared.shared.types import Mappings, OutputChannel
@@ -22,7 +22,7 @@ app = typer.Typer(help="Pyflared, a tool that helps auto configuring cloudflared
 @app.command()
 def version():
     """Show version info."""
-    v: str = asyncio.run(pyflared.commands.binary_version())
+    v: str = asyncio.run(pyflared.binary_version())
     typer.echo(v)
 
     # typer.Exit(code=1)
@@ -121,7 +121,7 @@ def quick_tunnel(
         Example:
             $ pyflared tunnel quick example.com=localhost:8000 example2.com=localhost:1234
     """
-    tunnel_process = pyflared.commands.run_quick_tunnel(service)  # TODO: Fix it! we cannot run in bg and end
+    tunnel_process = pyflared.run_quick_tunnel(service)  # TODO: Fix it! we cannot run in bg and end
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
         asyncio.run(tunnel_process.start_background([print_tunnel_box]))
 
@@ -131,7 +131,7 @@ async def remove_orphans(
 ):
     tunnel_manager = TunnelManager(api_token.get_secret_value())
     await tunnel_manager.remove_orphans()
-    tunnel_manager.client.close()
+    await tunnel_manager.client.close()
 
 
 @tunnel_subcommand.command("cleanup")
@@ -155,7 +155,7 @@ all_tunnels_connected = b"INF Registered tunnel connection connIndex=3"
 
 
 def pretty_tunnel_status(line: bytes, _: OutputChannel):
-    if commands.starting_tunnel in line:
+    if _patterns.starting_tunnel in line:
         err_console.print("Starting Tunnel...")
     elif b"ERR" in line:
         err_console.print(f"[bold red]{line.decode()}[/bold red]")
@@ -204,7 +204,7 @@ def mapped_tunnel(
 
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
         pair_dict = Mappings(parse_pair(p) for p in pair_args)
-        tunnel = pyflared.commands.run_dns_fixed_tunnel(
+        tunnel = pyflared.run_dns_fixed_tunnel(
             pair_dict, api_token=api_token.get_secret_value(), remove_orphan=remove_orphan,
             tunnel_name=tunnel_name)  # TODO: pass remove_orphan
         asyncio.run(tunnel.start_background([pretty_tunnel_status]))

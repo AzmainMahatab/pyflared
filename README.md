@@ -12,7 +12,9 @@
 
 ---
 
-**pyflared** wraps the official `cloudflared` binary and the Cloudflare API to provide a seamless CLI experience for creating and managing Cloudflare Tunnels. No more manual token juggling or complex configurations—just simple commands to expose your local services to the internet.
+**pyflared** wraps the official `cloudflared` binary and the Cloudflare API to provide a seamless CLI experience for
+creating and managing Cloudflare Tunnels. No more manual token juggling or complex configurations—just simple commands
+to expose your local services to the internet.
 
 ## ✨ Features
 
@@ -70,7 +72,8 @@ This will:
 2. Configure DNS records for your domains
 3. Route traffic to your local services
 
-> **Note:** Requires a Cloudflare API token with tunnel and DNS permissions. Set via `CLOUDFLARE_API_TOKEN` environment variable or enter when prompted.
+> **Note:** Requires a Cloudflare API token with tunnel and DNS permissions. Set via `CLOUDFLARE_API_TOKEN` environment
+> variable or enter when prompted.
 
 ### Cleanup Orphan Tunnels
 
@@ -89,7 +92,7 @@ pyflared --help
 ### Commands
 
 | Command                             | Description                              |
-| ----------------------------------- | ---------------------------------------- |
+|-------------------------------------|------------------------------------------|
 | `pyflared version`                  | Show the bundled cloudflared version     |
 | `pyflared tunnel quick <service>`   | Create a quick tunnel to a local service |
 | `pyflared tunnel mapped <pairs...>` | Create DNS-mapped tunnel(s)              |
@@ -98,7 +101,7 @@ pyflared --help
 ### Options
 
 | Option                  | Description                                    |
-| ----------------------- | ---------------------------------------------- |
+|-------------------------|------------------------------------------------|
 | `--verbose, -v`         | Show detailed cloudflared logs                 |
 | `--remove-orphans, -ro` | Remove orphan tunnels before creating new ones |
 | `--tunnel-name`         | Specify a custom tunnel name                   |
@@ -108,7 +111,7 @@ pyflared --help
 ### Environment Variables
 
 | Variable               | Description                                     |
-| ---------------------- | ----------------------------------------------- |
+|------------------------|-------------------------------------------------|
 | `CLOUDFLARE_API_TOKEN` | Your Cloudflare API token for tunnel management |
 
 ### API Token Permissions

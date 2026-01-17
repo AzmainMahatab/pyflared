@@ -23,6 +23,6 @@ logger.add(
 
 # Apply monkey patch till my PR is accepted.
 import pyflared.api_sdk.monkey_patch  # noqa: F401
-from pyflared._commands import binary_version, run_quick_tunnel, run_token_tunnel
+from pyflared._commands import binary_version, run_quick_tunnel, run_token_tunnel, run_dns_fixed_tunnel
 
-__all__ = ["binary_version", "run_quick_tunnel", "run_token_tunnel"]
+__all__ = ["binary_version", "run_quick_tunnel", "run_token_tunnel", "run_dns_fixed_tunnel"]

@@ -13,11 +13,12 @@ from pathlib import Path
 
 from loguru import logger
 
+from pyflared._patterns import starting_tunnel, config_pattern, tunnel_connection_pattern
 from pyflared.api_sdk.tunnel_manager import TunnelManager
 from pyflared.binary.binary_decorator import BinaryApp
 from pyflared.shared.types import Chunk, ChunkSignal, Mappings, OutputChannel
 
-__all__ = ["binary_version", "run_quick_tunnel", "run_token_tunnel"]
+__all__ = ["binary_version", "run_quick_tunnel", "run_token_tunnel", "run_dns_fixed_tunnel"]
 
 
 @cached_property
@@ -123,10 +124,6 @@ async def log_all_n_skip(stream_reader: asyncio.StreamReader, _: OutputChannel) 
 
 x = "Registered tunnel connection connIndex="
 
-starting_tunnel = b"Starting tunnel tunnelID="
-config_pattern = b"Updated to new configuration config="
-tunnel_connection_pattern = b"connIndex="
-
 patterns = (starting_tunnel, config_pattern, tunnel_connection_pattern)
 
 # re.escape ensures special characters (like . or *) don't break the regex
@@ -149,5 +146,5 @@ async def run_dns_fixed_tunnel(
     if remove_orphan:
         await tunnel_manager.remove_orphans()
     tunnel_token = await tunnel_manager.fixed_dns_tunnel(mappings, tunnel_name=tunnel_name)
-    tunnel_manager.client.close()
+    await tunnel_manager.client.close()
     return *token_tunnel_cmd, tunnel_token.get_secret_value()

@@ -10,8 +10,9 @@ build-backend = "hatchling.build"
 [project]
 name = "pyflared"
 dynamic = ["version"]
-description = ''
+description = "A Python CLI tool for effortless Cloudflare Tunnel management"
 readme = "README.md"
+
 requires-python = ">=3.12"
 license = "MIT"
 keywords = []

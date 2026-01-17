@@ -235,7 +235,7 @@ class TunnelManager:
         response = await self.client.post(
             create_tunnel_endpoint,
             body=payload,
-            cast_to=dict  # Tell SDK to return a raw dict
+            cast_to=dict[str, Any]
         )
 
         return CustomTunnel.from_cloudflare_response(response)
@@ -249,7 +249,6 @@ class TunnelManager:
                 account_id=account_id,
                 tunnel_name=tunnel_name,
                 metadata={consts.api_managed_tag: True},
-                api_token=self.client.api_token,  # type: ignore #This also helpful because their client also checks env
             )
 
     async def fixed_dns_tunnel(

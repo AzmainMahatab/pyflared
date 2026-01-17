@@ -1,153 +1,84 @@
-name: cd
+name: Release-Please
+
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'cloudflared.version'
+    branches: [ "main" ]
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write # REQUIRED for PyPI Trusted Publishing
 
 jobs:
+  # JOB 1: RELEASE MANAGER
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.release.outputs.release_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+
   build-sdist:
-    name: Build source distribution
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    name: Build Sdist
     runs-on: ubuntu-latest
     steps:
-      # 1. Bring your code onto the runner
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: pypa/hatch@install
 
-      - name: Install Hatch
-        uses: pypa/hatch@install
-
-      # The '-t sdist' flag is crucial. It tells Hatch to ONLY build sdist.
       - name: Build sdist
         run: hatch build -t sdist
-
       - uses: actions/upload-artifact@v4
         with:
           name: dist-sdist
           path: dist/*.tar.gz
 
+  # JOB 2: WHEEL BUILDER (Matrix)
   build-wheels:
-    name: Build wheels on ${{ matrix.os }}
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+    name: Build Wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        os: [ ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest ]
     steps:
-      # 1. Bring your code onto the runner
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+      - uses: pypa/hatch@install
 
-      - name: Install Hatch
-        uses: pypa/hatch@install
-
-      # The '-t wheel' flag is crucial. It tells Hatch to ONLY build wheels.
-      - name: Build wheel
+      - name: Build Wheel
         run: hatch build -t wheel
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
-          # Unique names prevent overwriting in temporary storage
-          name: dist-wheels-${{ matrix.os }}
+          name: wheels-${{ matrix.os }}
           path: dist/*.whl
 
+  # JOB 3: PUBLISHER (PyPI + GitHub)
   publish:
-    name: Publish to PyPI
-    needs: [ build-sdist, build-wheels ] # Wait for BOTH build jobs
+    needs: [ release-please, build-wheels ]
+    if: ${{ needs.release-please.outputs.release_created }}
     runs-on: ubuntu-latest
-    environment: release
-    permissions:
-      id-token: write
+    environment:
+      name: pypi
+      url: https://pypi.org/p/pyflared
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
-          # This pattern grabs 'dist-sdist', 'dist-wheels-windows-latest', etc.
-          pattern: dist-*
-          # Merges them all into one flat 'dist' folder
-          merge-multiple: true
           path: dist
-      - name: Make Release
+          merge-multiple: true
 
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          packages-dir: dist/
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: dist/*
 
-      - name: Publish to Docker registry, GHCR and Docker Hub
-
-#  publish-to-testpypi: # Fix
-#    name: Publish to TestPyPI
-#    needs: [ build-sdist,build-wheels ]
-#    runs-on: ubuntu-latest
-#    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-#
-#    environment:
-#      name: testpypi
-#      url: https://test.pypi.org/p/pyflared
-#
-#    permissions:
-#      id-token: write  # IMPORTANT: mandatory for trusted publishing
-#
-#    steps:
-#      - name: Download all the dists
-#        uses: actions/download-artifact@v4
-#        with:
-#          name: python-package-distributions
-#          path: dist/
-#
-#      - name: Publish distribution to TestPyPI
-#        uses: pypa/gh-action-pypi-publish@release/v1
-#        with:
-#          repository-url: https://test.pypi.org/legacy/
-#          skip-existing: true
-#
-#
-#
-#  publish-to-pypi:
-#    name: Publish to PyPI
-#    needs: build
-#    runs-on: ubuntu-latest
-#    if: startsWith(github.ref, 'refs/tags/')  # Only publish on tag pushes
-#
-#    environment:
-#      name: pypi
-#      url: https://pypi.org/p/pyflared
-#
-#    permissions:
-#      id-token: write  # IMPORTANT: mandatory for trusted publishing
-#
-#    steps:
-#      - name: Download all the dists
-#        uses: actions/download-artifact@v4
-#        with:
-#          name: python-package-distributions
-#          path: dist/
-#
-#      - name: Publish distribution to PyPI
-#        uses: pypa/gh-action-pypi-publish@release/v1
-#
-#  publish:
-#    name: Publish to PyPI
-#    needs: build_wheels  # <--- CRITICAL: Waits for all matrix jobs to pass
-#    runs-on: ubuntu-latest
-#    permissions:
-#      id-token: write  # Required for Trusted Publishing (OIDC)
-#
-#    steps:
-#      - name: Download all artifacts
-#        uses: actions/download-artifact@v4
-#        with:
-#          # v4 feature: This downloads all artifacts matching the pattern
-#          pattern: wheels-*
-#          # v4 feature: This merges them all into one 'dist' folder automatically
-#          merge-multiple: true
-#          path: dist
-#
-#      - name: Publish to PyPI
-#        uses: pypa/gh-action-pypi-publish@release/v1
-#        with:
-#          # It automatically finds files in 'dist/' by default
-#          # No password needed if you configure PyPI Trusted Publishing
-#          packages-dir: dist/
+      #Publish is suppressed for now
+      #      - name: Publish to PyPI
+      #        uses: pypa/gh-action-pypi-publish@release/v1
+      #        # No password needed if using Trusted Publishing (OIDC)
 
