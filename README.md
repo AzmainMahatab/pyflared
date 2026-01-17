@@ -13,7 +13,7 @@
 ## Installation
 
 ```console
-pip install pyflared
+uv tool install pyflared
 ```
 
 ## License

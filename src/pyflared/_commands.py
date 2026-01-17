@@ -17,7 +17,7 @@ from pyflared.api_sdk.tunnel_manager import TunnelManager
 from pyflared.binary.binary_decorator import BinaryApp
 from pyflared.shared.types import Chunk, ChunkSignal, Mappings, OutputChannel
 
-__all__ = ["run_quick_tunnel", "run_token_tunnel", "version"]
+__all__ = ["binary_version", "run_quick_tunnel", "run_token_tunnel"]
 
 
 @cached_property
@@ -87,7 +87,7 @@ cloudflared = BinaryApp(get_path())
 
 
 @cloudflared.instant()
-def version(): return "version"
+def binary_version(): return "version"
 
 
 quickflare_url_pattern: re.Pattern[bytes] = re.compile(rb'(https://[a-zA-Z0-9-]+\.trycloudflare\.com)')
@@ -149,4 +149,5 @@ async def run_dns_fixed_tunnel(
     if remove_orphan:
         await tunnel_manager.remove_orphans()
     tunnel_token = await tunnel_manager.fixed_dns_tunnel(mappings, tunnel_name=tunnel_name)
+    tunnel_manager.client.close()
     return *token_tunnel_cmd, tunnel_token.get_secret_value()

@@ -42,12 +42,18 @@ Documentation = "https://github.com/Azmain/pyflared#readme"
 Issues = "https://github.com/Azmain/pyflared/issues"
 Source = "https://github.com/Azmain/pyflared"
 
+[tool.hatch.version]
+path = "src/pyflared/__about__.py"
+
+#[tool.hatch.envs.default.env-vars]
+#PKG_NAME = "pyflared"
+
 [project.scripts]
 pyflared = "pyflared.cli:app"
 
-[tool.hatch.metadata.hooks.custom]
-binary_version = "latest"
-wrapper_version = 1
+#[tool.hatch.metadata.hooks.custom]
+#binary_version = "latest"
+#wrapper_version = 1
 [tool.hatch.build.hooks.custom]
 
 [tool.hatch.envs.default]
@@ -84,8 +90,8 @@ log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 [tool.ruff.lint]
 ignore = [
     "SIM108",
-    "TRY003", #Long msg in Error
-    "ARG002", #Function can have arg even if needed to match signature
+    "TRY003", # Long msg in Error
+    "ARG002", # Function can have arg even if needed to match signature
     "EM101", # Ignore "String literal in exception"
     "EM102", # Ignore "f-string in exception",
 ]
@@ -99,6 +105,9 @@ ignore = [
 source_pkgs = ["pyflared", "tests"]
 branch = true
 parallel = true
+omit = [
+    "src/pyflared/__about__.py",
+]
 
 [tool.coverage.paths]
 pyflared = ["src/pyflared", "*/pyflared/src/pyflared"]

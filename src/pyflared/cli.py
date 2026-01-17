@@ -8,8 +8,8 @@ from pydantic import SecretStr
 from rich.console import Console
 from rich.panel import Panel
 
-import pyflared.commands
-from pyflared import commands
+import pyflared._commands
+from pyflared import _commands
 from pyflared.api_sdk.tunnel_manager import TunnelManager
 from pyflared.log.config import isolated_logging
 from pyflared.shared.types import Mappings, OutputChannel
@@ -22,7 +22,7 @@ app = typer.Typer(help="Pyflared, a tool that helps auto configuring cloudflared
 @app.command()
 def version():
     """Show version info."""
-    v: str = asyncio.run(pyflared.commands.version())
+    v: str = asyncio.run(pyflared.commands.binary_version())
     typer.echo(v)
 
     # typer.Exit(code=1)
@@ -131,6 +131,7 @@ async def remove_orphans(
 ):
     tunnel_manager = TunnelManager(api_token.get_secret_value())
     await tunnel_manager.remove_orphans()
+    tunnel_manager.client.close()
 
 
 @tunnel_subcommand.command("cleanup")

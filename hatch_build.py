@@ -3,14 +3,12 @@ import logging
 import platform
 import shutil
 import tarfile
-from abc import ABC, abstractmethod
 from functools import cached_property
 from pathlib import Path
 from typing import Any
 
 import httpx
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
-from hatchling.metadata.plugin.interface import MetadataHookInterface
 from klepto.archives import dir_archive
 from packaging.tags import platform_tags
 from rich.console import Console
@@ -56,20 +54,7 @@ class CloudFlareBinary:
         return f"{base_url}/{self.version}/{self.asset_name}"
 
 
-_binary_version = "binary_version"
-
-
-class BuildShareMixin(ABC):
-    """
-    Mixin that handles build directory logic.
-    Requires the consumer to provide a 'root' attribute.
-    """
-
-    @property
-    @abstractmethod
-    def root(self) -> Path | str:
-        """The root directory for the project."""
-        ...
+class BuildHook(BuildHookInterface):
 
     @cached_property
     def build_dir(self) -> Path:
@@ -96,61 +81,43 @@ class BuildShareMixin(ABC):
     def cache_db(self):
         return dir_archive(self.cache_dir, cached=False)
 
-    client = httpx.Client(follow_redirects=True)
-
-
-class MetadataHook(MetadataHookInterface, BuildShareMixin):
-
-    @cached_property
-    def file_version(self) -> str:
-        version_file = Path(self.root) / "cloudflared.version"
-
-        if version_file.is_file() and (content := version_file.read_text("utf-8").strip()):
-            return content
-
-        return "latest"
-
-    @cached_property
-    def binary_version(self) -> str:
-        version = self.config.get(_binary_version, self.file_version)
-
-        if version == "latest":
-            response = self.client.get(cloudflared_gh_api)
-            response.raise_for_status()
-            version = response.json()["tag_name"]
-
-        self.cache_db[_binary_version] = version
-        return version
-
-    def update(self, metadata):
-        self.ensure_dirs()
-        wrapper_version = self.config.get("wrapper_version", 0)
-        logger.info(f"Wrapper version: {wrapper_version}")  # Change to logger
-
-        metadata["version"] = f"{self.binary_version}.{wrapper_version}"
-        logger.info(f"Pyflared version: {metadata["version"]}")
-
-
-class BuildHook(BuildHookInterface, BuildShareMixin):
-    @cached_property
-    def cloudflared_binary(self):
-        binary_version = self.cache_db[_binary_version]
-        return CloudFlareBinary(binary_version)
-
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
         build_data["tag"] = f"py3-none-{list(platform_tags())[-1]}"  # Maximum compatibility since binary is static
 
         if self.target_name != "wheel":
             return
 
-        # self.ensure_dirs() #No need as already done in MetadataHook
-        self._stage_downloads()
-        self._copy_extract()
-        self._link_binary(build_data)
+        self.ensure_dirs()
+        with httpx.Client(follow_redirects=True) as client:
+            cloudflare_binary = self._stage_downloads(client)
 
-    def _stage_downloads(self):
+        self._copy_extract(cloudflare_binary)
+        self._link_binary(build_data, cloudflare_binary)
 
-        key = hashlib.md5(self.cloudflared_binary.link.encode(), usedforsecurity=False).hexdigest()
+    @cached_property
+    def file_binary_version(self) -> str:
+        version_file = Path(self.root) / "cloudflared.version"
+        if version_file.is_file() and (content := version_file.read_text("utf-8").strip()):
+            return content
+        return "latest"
+
+    def binary_version(self, client: httpx.Client) -> str:
+        version = self.file_binary_version
+        if version == "latest":
+            version = self.current_latest(client)
+        return version
+
+    @classmethod
+    def current_latest(cls, client: httpx.Client) -> str:
+        response = client.get(cloudflared_gh_api)
+        response.raise_for_status()
+        return response.json()["tag_name"]
+
+    def _stage_downloads(self, client: httpx.Client) -> CloudFlareBinary:
+        version = self.binary_version(client)
+        cloudflared_binary = CloudFlareBinary(version)
+
+        key = hashlib.md5(cloudflared_binary.link.encode(), usedforsecurity=False).hexdigest()
 
         # No 'with' block needed. db.get() reads directly from the disk.
         if old_etag := self.cache_db.get(key):
@@ -159,35 +126,37 @@ class BuildHook(BuildHookInterface, BuildShareMixin):
             headers = {}
 
         # Download file
-        response = self.client.get(self.cloudflared_binary.link, headers=headers)
+        response = client.get(cloudflared_binary.link, headers=headers)
 
         if response.status_code == httpx.codes.NOT_MODIFIED:
-            console.print(f"Reusing cached {self.cloudflared_binary.asset_name}")
+            console.print(f"Reusing cached {cloudflared_binary.asset_name}")
         else:
             response.raise_for_status()
-            download_file = self.download_dir / self.cloudflared_binary.asset_name
+            download_file = self.download_dir / cloudflared_binary.asset_name
             with open(download_file, "wb") as file:
-                logger.info(f"Downloading {self.cloudflared_binary.asset_name}")
+                logger.info(f"Downloading {cloudflared_binary.asset_name}")
                 file.write(response.content)
 
             # Save: Writes happen immediately because cached=False
             if etag := response.headers.get("ETag"):
                 self.cache_db[key] = etag
 
-    def _copy_extract(self) -> None:
-        downloaded_file = self.download_dir / self.cloudflared_binary.asset_name
-        if self.cloudflared_binary.is_tgz:
+        return cloudflared_binary
+
+    def _copy_extract(self, cloudflared_binary: CloudFlareBinary) -> None:
+        downloaded_file = self.download_dir / cloudflared_binary.asset_name
+        if cloudflared_binary.is_tgz:
             with tarfile.open(downloaded_file) as tar:
-                logger.info(f"Extracting {self.cloudflared_binary.asset_name}")
+                logger.info(f"Extracting {cloudflared_binary.asset_name}")
                 tar.extractall(self.binary_dir)
         else:
-            final_binary = self.binary_dir / self.cloudflared_binary.final_binary_name
+            final_binary = self.binary_dir / cloudflared_binary.final_binary_name
             shutil.copy(downloaded_file, final_binary)
 
-    def _link_binary(self, build_data: dict) -> None:
-        final_binary = self.binary_dir / self.cloudflared_binary.final_binary_name
+    def _link_binary(self, build_data: dict, cloudflared_binary: CloudFlareBinary) -> None:
+        final_binary = self.binary_dir / cloudflared_binary.final_binary_name
         build_data["force_include"][
-            final_binary] = f"{self.metadata.name}/bin/{self.cloudflared_binary.final_binary_name}"
+            final_binary] = f"{self.metadata.name}/bin/{cloudflared_binary.final_binary_name}"
 
     # Clean is not fully correct for now, hopping it to be fixed on the hatch side
     # https://github.com/pypa/hatch/issues/2147

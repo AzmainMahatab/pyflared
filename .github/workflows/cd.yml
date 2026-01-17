@@ -1,10 +1,12 @@
-name: cd.yml
+name: cd
 on:
-
-
+  push:
+    branches:
+      - main
+    paths:
+      - 'cloudflared.version'
 
 jobs:
-
   build-sdist:
     name: Build source distribution
     runs-on: ubuntu-latest
@@ -43,9 +45,6 @@ jobs:
       - name: Build wheel
         run: hatch build -t wheel
 
-      - name: Publish to PyPI
-        run: hatch publish
-
       - uses: actions/upload-artifact@v4
         with:
           # Unique names prevent overwriting in temporary storage
@@ -75,7 +74,7 @@ jobs:
         with:
           packages-dir: dist/
 
-      - name: Publish to Docker registry
+      - name: Publish to Docker registry, GHCR and Docker Hub
 
 #  publish-to-testpypi: # Fix
 #    name: Publish to TestPyPI
