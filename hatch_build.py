@@ -39,13 +39,26 @@ ARCH_TO_CLOUDFLARED = {
     "armv7l": "arm",
 }
 
-# Python's platform.machine() -> wheel platform tag
-ARCH_TO_WHEEL = {
+# Python's platform.machine() -> wheel platform tag (Linux uses aarch64, macOS uses arm64)
+ARCH_TO_WHEEL_LINUX = {
     "x86_64": "x86_64",
     "amd64": "x86_64",
     "aarch64": "aarch64",
     "arm64": "aarch64",
     "armv7l": "armv7l",
+}
+
+ARCH_TO_WHEEL_MACOS = {
+    "x86_64": "x86_64",
+    "amd64": "x86_64",
+    "aarch64": "arm64",
+    "arm64": "arm64",
+}
+
+ARCH_TO_WHEEL_WINDOWS = {
+    "x86_64": "amd64",
+    "amd64": "amd64",
+    "x86": "32",
 }
 
 
@@ -69,19 +82,20 @@ def get_wheel_platform_tag() -> str:
     - macOS arm64: macosx_11_0 (arm64 was introduced in macOS 11)
     - Windows: win_amd64/win32 (no version component needed)
     """
-    arch = ARCH_TO_WHEEL.get(MACHINE, MACHINE)
-    
     if SYSTEM == "linux":
+        arch = ARCH_TO_WHEEL_LINUX.get(MACHINE, MACHINE)
         return f"manylinux_2_17_{arch}"
     elif SYSTEM == "darwin":
+        arch = ARCH_TO_WHEEL_MACOS.get(MACHINE, MACHINE)
         # arm64 requires macOS 11+, x86_64 can go back to 10.9
-        min_version = "11_0" if MACHINE in ("arm64", "aarch64") else "10_9"
+        min_version = "11_0" if arch == "arm64" else "10_9"
         return f"macosx_{min_version}_{arch}"
     elif SYSTEM == "windows":
+        arch = ARCH_TO_WHEEL_WINDOWS.get(MACHINE, MACHINE)
         return f"win_{arch}"
     else:
         # Fallback for unknown systems
-        return f"{SYSTEM}_{arch}"
+        return f"{SYSTEM}_{MACHINE}"
 
 
 # =============================================================================
