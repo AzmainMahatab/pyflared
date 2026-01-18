@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.1-beta2](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta1...v0.0.1-beta2) (2026-01-18)
+
+
+### Bug Fixes
+
+* fix macOS build script ([310ab7d](https://github.com/AzmainMahatab/pyflared/commit/310ab7d8d7ea8c1ded88e9256c61be8937e20b0e))
+
 ## [0.0.1-beta1](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta0...v0.0.1-beta1) (2026-01-18)
 
 
