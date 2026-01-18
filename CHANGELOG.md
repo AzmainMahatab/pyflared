@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.1-beta4](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta3...v0.0.1-beta4) (2026-01-18)
+
+
+### Bug Fixes
+
+* macros build script [#2](https://github.com/AzmainMahatab/pyflared/issues/2) ([7a13857](https://github.com/AzmainMahatab/pyflared/commit/7a138571219dac50ca065e184ae1422bfc7e75b5))
+
 ## [0.0.1-beta3](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta2...v0.0.1-beta3) (2026-01-18)
 
 
