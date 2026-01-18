@@ -44,7 +44,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest, macos-15-intel]
+        os:
+          [
+            ubuntu-latest,
+            ubuntu-24.04-arm,
+            windows-latest,
+            macos-latest,
+            macos-15-intel,
+          ]
     steps:
       - uses: actions/checkout@v6
       - uses: pypa/hatch@install
@@ -63,6 +70,10 @@ jobs:
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: ubuntu-latest
     steps:
+      # Checkout first (needed for Docker build context)
+      - uses: actions/checkout@v6
+
+      # Download artifacts AFTER checkout so they don't get overwritten
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -76,8 +87,6 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
-
-      - uses: actions/checkout@v6 # Needed for Docker build context
 
       # 4. Docker Setup
       - name: Set up QEMU
