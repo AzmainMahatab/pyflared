@@ -3,6 +3,7 @@
     ".": {
       "release-type": "python",
       "prerelease": true,
+      "prerelease-type": "beta",
       "extra-files": [
         {
           "type": "generic",
