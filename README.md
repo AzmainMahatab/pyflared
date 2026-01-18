@@ -1,18 +1,23 @@
-<p align="center">
-  <h1 align="center">pyflared</h1>
-  <p align="center">
+<div align="center">
+  <h1>Pyflared</h1>
+  <p>
     <strong>A Python CLI tool for effortless Cloudflare Tunnel management</strong>
   </p>
-  <p align="center">
+  <p>
     <a href="https://pypi.org/project/pyflared"><img src="https://img.shields.io/pypi/v/pyflared.svg?style=flat-square" alt="PyPI - Version"></a>
     <a href="https://pypi.org/project/pyflared"><img src="https://img.shields.io/pypi/pyversions/pyflared.svg?style=flat-square" alt="PyPI - Python Version"></a>
-    <a href="https://github.com/Azmain/pyflared/blob/main/LICENSE.txt"><img src="https://img.shields.io/github/license/Azmain/pyflared?style=flat-square" alt="License"></a>
+    <a href="https://github.com/cloudflare/cloudflared/releases/latest">
+        <img src="https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FAzmainMahatab%2Fpyflared%2Fmain%2Fcloudflared.version&query=%24&label=cloudflared" alt="Cloudflared Version">
+    </a>
+    <a href="https://github.com/AzmainMahatab/pyflared/blob/main/LICENSE.txt">
+        <img src="https://img.shields.io/github/license/AzmainMahatab/pyflared?style=flat-square" alt="License">
+    </a>
   </p>
-</p>
+</div>
 
 ---
 
-**pyflared** wraps the official `cloudflared` binary and the Cloudflare API to provide a seamless CLI experience for
+**Pyflared** wraps the official `cloudflared` binary and the Cloudflare API to provide a seamless CLI experience for
 creating and managing Cloudflare Tunnels. No more manual token juggling or complex configurations—just simple commands
 to expose your local services to the internet.
 
@@ -42,8 +47,8 @@ pip install pyflared
 ### Using Docker
 
 ```console
-docker pull ghcr.io/azmain/pyflared:latest
-docker run --rm ghcr.io/azmain/pyflared --help
+docker pull ghcr.io/azmainmahatab/pyflared:latest
+docker run --rm ghcr.io/azmainmahatab/pyflared --help
 ```
 
 ## 🚀 Quick Start
@@ -98,13 +103,13 @@ pyflared --help
 | `pyflared tunnel mapped <pairs...>` | Create DNS-mapped tunnel(s)              |
 | `pyflared tunnel cleanup`           | Remove orphan tunnels and DNS records    |
 
-### Options
+### Options for `tunnel mapped`
 
-| Option                  | Description                                    |
-|-------------------------|------------------------------------------------|
-| `--verbose, -v`         | Show detailed cloudflared logs                 |
-| `--remove-orphans, -ro` | Remove orphan tunnels before creating new ones |
-| `--tunnel-name`         | Specify a custom tunnel name                   |
+| Option               | Description                                                       |
+|----------------------|-------------------------------------------------------------------|
+| `--keep-orphans, -k` | Preserve orphan tunnels (prevents default removal)                |
+| `--tunnel-name, -n`  | Specify a custom tunnel name (default: `hostname_YYYY-MM-DD_...`) |
+| `--verbose, -v`      | Show detailed cloudflared logs                                    |
 
 ## 🔧 Configuration
 
@@ -132,7 +137,7 @@ For DNS-mapped tunnels, your API token needs the following permissions:
 ### Setup
 
 ```console
-git clone https://github.com/Azmain/pyflared.git
+git clone https://github.com/AzmainMahatab/pyflared.git
 cd pyflared
 hatch env create
 ```
@@ -155,34 +160,17 @@ hatch run types:check
 hatch build
 ```
 
-## 🏗️ Architecture
-
-```
-pyflared/
-├── cli.py           # Typer CLI application
-├── _commands.py     # Core tunnel command wrappers
-├── api_sdk/         # Cloudflare API integration
-│   └── tunnel_manager.py  # Tunnel & DNS management
-├── binary/          # cloudflared binary handling
-│   ├── binary_decorator.py
-│   └── process.py   # Async subprocess management
-├── log/             # Logging configuration
-├── shared/          # Shared types and utilities
-└── utils/           # Helper utilities
-```
-
 ## 📄 License
 
-`pyflared` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.
+`Pyflared` is distributed under the terms of the [MIT](https://spdx.org/licenses/MIT.html) license.
 
 ## 🙏 Acknowledgments
 
 - [cloudflared](https://github.com/cloudflare/cloudflared) — The official Cloudflare Tunnel client
 - [Typer](https://typer.tiangolo.com/) — CLI framework
-- [Cloudflare Python SDK](https://github.com/cloudflare/cloudflare-python) — Official API client
 
 ---
 
 <p align="center">
-  Made with ❤️ by <a href="https://github.com/Azmain">Azmain</a>
+  Made with ❤️ by <a href="https://github.com/AzmainMahatab">Azmain Mahatab</a>
 </p>

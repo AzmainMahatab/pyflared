@@ -2,10 +2,14 @@
   "packages": {
     ".": {
       "release-type": "python",
+      "prerelease": true,
+      "prerelease-type": "beta",
+      "bump-minor-pre-major": true,
+      "bump-patch-for-minor-pre-major": true,
       "extra-files": [
         {
           "type": "generic",
-          "path": "src//__about__.py"
+          "path": "src/pyflared/__about__.py"
         }
       ]
     }
