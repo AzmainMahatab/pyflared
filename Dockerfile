@@ -17,10 +17,11 @@ ENV USE_PREBUILT_WHEEL=$USE_PREBUILT_WHEEL
 COPY . .
 
 # python build script instead of Bash logic
-RUN python scripts/build.py
+RUN uv run scripts/build.py
 
 # ============================================================================
-# Final Stage
+# Final Stage - Using Alpine for smaller image size
+# The wheel uses generic linux_* tag which pip can install anywhere.
 # ============================================================================
 FROM python:3.12-alpine
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
@@ -28,11 +29,10 @@ WORKDIR /app
 
 COPY --from=builder /app/dist/*.whl ./
 
-# Dynamically detect architecture and install the matching wheel
-# uname -m returns: x86_64, aarch64, armv7l, etc.
+# Install the generic linux wheel - works on any Linux since cloudflared is static
 RUN set -ex; \
     ARCH=$(uname -m); \
-    uv pip install --system ./*manylinux*${ARCH}*.whl; \
+    pip install --no-cache-dir ./*linux_${ARCH}*.whl; \
     rm -f *.whl
 
 ENTRYPOINT ["pyflared"]

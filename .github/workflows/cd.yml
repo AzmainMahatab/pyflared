@@ -2,12 +2,13 @@ name: CD
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
 
 permissions:
   contents: write
   pull-requests: write
   id-token: write # REQUIRED for PyPI Trusted Publishing
+  packages: write # REQUIRED for GHCR
 
 jobs:
   # JOB 1: RELEASE MANAGER
@@ -64,42 +65,27 @@ jobs:
           name: wheels-${{ matrix.os }}
           path: dist/*.whl
 
-  # JOB 3: PUBLISHER (PyPI + GitHub + GHCR)
+  # JOB 3: PUBLISHER (Docker -> Retag -> PyPI + GitHub)
   publish:
-    needs: [release-please, build-sdist, build-wheels]
+    needs: [ release-please, build-sdist, build-wheels ]
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: ubuntu-latest
     steps:
-      # Checkout first (needed for Docker build context)
+      # 1. Checkout (needed for Docker build context and retag script)
       - uses: actions/checkout@v6
 
-      # Download artifacts AFTER checkout so they don't get overwritten
+      # 2. Download artifacts
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.release-please.outputs.tag_name }}
-          files: dist/*
-
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
-
-      # 4. Docker Setup
+      # 3. Docker Setup & Build FIRST (uses generic linux_* wheels)
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Docker Hub suprressed for now
-      #      - name: Login to Docker Hub
-      #        uses: docker/login-action@v3
-      #        with:
-      #          username: ${{ secrets.DOCKER_USERNAME }}
-      #          password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -113,12 +99,11 @@ jobs:
         with:
           images: |
             ghcr.io/${{ github.repository }}
-          #            <YOUR_DOCKERHUB_USERNAME>/pyflared
           tags: |
             type=raw,value=${{ needs.release-please.outputs.tag_name }}
             type=raw,value=latest
 
-      - name: Build and Push
+      - name: Build and Push Docker
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -130,3 +115,22 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: true
           sbom: true
+
+      # 4. Upload to GitHub Release (generic linux_* wheels work fine for direct download)
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: dist/*
+
+      # 5. Retag Linux wheels for PyPI (linux_* -> manylinux + musllinux)
+      # PyPI enforces platform tag restrictions, so we need proper tags
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Retag Linux wheels
+        run: uv run scripts/retag.py dist
+
+      # 6. Publish to PyPI (with retagged manylinux/musllinux wheels)
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

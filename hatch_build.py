@@ -68,23 +68,23 @@ ARCH_TO_WHEEL_WINDOWS = {
 
 
 def get_wheel_platform_tag() -> str:
-    """Get a PyPI-compatible platform tag for the wheel.
+    """Get a platform tag for the wheel.
 
     We hardcode all platform tags for maximum compatibility because cloudflared
     is a static Go binary with NO system library dependencies.
     
-    Using platform_tags() would tie compatibility to the build machine's OS version,
-    which is not what we want for a static binary.
-    
     Platform tags used:
-    - Linux: manylinux_2_17 (glibc 2.17, RHEL 7+, Ubuntu 18.04+, Debian 9+)
+    - Linux: Generic linux_* (retagged to manylinux/musllinux by scripts/retag.py)
     - macOS x86_64: macosx_10_9 (oldest commonly supported)
     - macOS arm64: macosx_11_0 (arm64 was introduced in macOS 11)
     - Windows: win_amd64/win32 (no version component needed)
+    
+    Note: Linux wheels use a generic `linux_*` tag that works in Docker and local
+    installs. The retag.py script converts these to manylinux/musllinux for PyPI.
     """
     if SYSTEM == "linux":
         arch = ARCH_TO_WHEEL_LINUX.get(MACHINE, MACHINE)
-        return f"manylinux_2_17_{arch}"
+        return f"linux_{arch}"
     elif SYSTEM == "darwin":
         arch = ARCH_TO_WHEEL_MACOS.get(MACHINE, MACHINE)
         # arm64 requires macOS 11+, x86_64 can go back to 10.9
