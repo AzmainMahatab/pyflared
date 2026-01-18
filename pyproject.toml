@@ -39,9 +39,9 @@ dependencies = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/Azmain/pyflared#readme"
-Issues = "https://github.com/Azmain/pyflared/issues"
-Source = "https://github.com/Azmain/pyflared"
+Documentation = "https://github.com/AzmainMahatab/pyflared#readme"
+Issues = "https://github.com/AzmainMahatab/pyflared/issues"
+Source = "https://github.com/AzmainMahatab/pyflared"
 
 [tool.hatch.version]
 path = "src/pyflared/__about__.py"

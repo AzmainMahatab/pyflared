@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 import pyflared._commands
-from pyflared import _commands, _patterns
+from pyflared import _patterns
 from pyflared.api_sdk.tunnel_manager import TunnelManager
 from pyflared.log.config import isolated_logging
 from pyflared.shared.types import Mappings, OutputChannel
@@ -151,9 +151,6 @@ def cleanup_orphans(
         asyncio.run(remove_orphans(api_token))
 
 
-all_tunnels_connected = b"INF Registered tunnel connection connIndex=3"
-
-
 def pretty_tunnel_status(line: bytes, _: OutputChannel):
     if _patterns.starting_tunnel in line:
         err_console.print("Starting Tunnel...")
@@ -161,7 +158,7 @@ def pretty_tunnel_status(line: bytes, _: OutputChannel):
         err_console.print(f"[bold red]{line.decode()}[/bold red]")
     # TODO: Add other Index check
     # TODO: Add connection config
-    elif all_tunnels_connected in line:
+    elif _patterns.all_tunnels_connected in line:
         # err_console.print(line)
         err_console.print(
             "[green]Tunnel status is healthy, with all 4 connections[/green]")  # TODO: Add locations and protocols
@@ -175,10 +172,14 @@ def mapped_tunnel(
             help="List of mappings in the format 'domain=service'.",
             show_default=False
         ),
-        remove_orphan: bool = typer.Option(
-            True, "--remove-orphans", "-ro", help="Remove orphan tunnels"),
+        keep_orphans: bool = typer.Option(
+            False,
+            "--keep-orphans",
+            "-k",
+            help="Preserve orphan tunnels (prevents default removal)."
+        ),
         tunnel_name: str | None = typer.Option(
-            None,
+            None, "--tunnel-name", "-n",
             help="Tunnel name",
             show_default="hostname_YYYY-MM-DD_UTC..."
         ),
@@ -186,7 +187,7 @@ def mapped_tunnel(
             None,
             envvar="CLOUDFLARE_API_TOKEN",
             parser=SecretStr,
-            help="CF API Token to manage tunnels and dns",  # TODO: specify token needed permission
+            help="Cloudflare API Token to manage tunnels and dns",  # TODO: specify token needed permission
         ),
         verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
 ):
@@ -205,6 +206,6 @@ def mapped_tunnel(
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
         pair_dict = Mappings(parse_pair(p) for p in pair_args)
         tunnel = pyflared.run_dns_fixed_tunnel(
-            pair_dict, api_token=api_token.get_secret_value(), remove_orphan=remove_orphan,
+            pair_dict, api_token=api_token.get_secret_value(), remove_orphan=not keep_orphans,
             tunnel_name=tunnel_name)  # TODO: pass remove_orphan
         asyncio.run(tunnel.start_background([pretty_tunnel_status]))
