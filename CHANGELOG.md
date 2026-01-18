@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.1-beta7](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta6...v0.0.1-beta7) (2026-01-18)
+
+
+### Bug Fixes
+
+* massive fix for whl tagging ([5aaed91](https://github.com/AzmainMahatab/pyflared/commit/5aaed9108087fa80d2537764f5d1496d7924abbb))
+
 ## [0.0.1-beta6](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta5...v0.0.1-beta6) (2026-01-18)
 
 
