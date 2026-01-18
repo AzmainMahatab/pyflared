@@ -19,7 +19,8 @@ console = Console(stderr=True)
 base_url = "https://github.com/cloudflare/cloudflared/releases/download"
 cloudflared_gh_api = "https://api.github.com/repos/cloudflare/cloudflared/releases/latest"
 
-tgz = ".tar.gz"
+tgz = ".tgz"
+exe = ".exe"
 
 
 class CloudFlareBinary:
@@ -30,7 +31,6 @@ class CloudFlareBinary:
         system = platform.system().lower()
         arch = platform.machine().lower()
 
-        # --- FIX START: Map Python arch to Cloudflare arch ---
         arch_map = {
             "x86_64": "amd64",
             "aarch64": "arm64",
@@ -38,16 +38,19 @@ class CloudFlareBinary:
         }
         # Use the mapped value or default to the original if not found
         arch = arch_map.get(arch, arch)
-        # --- FIX END ---
 
-        ext = {
+        # Extension for the download asset (archive or binary)
+        asset_ext = {
             "darwin": tgz,
-            "windows": ".exe",
+            "windows": exe,
         }.get(system, "")
 
-        self.is_tgz = ext == tgz
-        self.asset_name = f"{name}-{system}-{arch}{ext}"
-        self.final_binary_name = f"{name}{ext}"
+        # Extension for the final binary (after extraction if tarball)
+        binary_ext = exe if system == "windows" else ""
+
+        self.is_tgz = asset_ext == tgz
+        self.asset_name = f"{name}-{system}-{arch}{asset_ext}"
+        self.final_binary_name = f"{name}{binary_ext}"
 
     @property
     def link(self):
