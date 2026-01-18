@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.1-beta6](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta5...v0.0.1-beta6) (2026-01-18)
+
+
+### Bug Fixes
+
+* docker fix build script 2 ([ee81201](https://github.com/AzmainMahatab/pyflared/commit/ee81201f303ee4fecb46060faedcc507d75bf8b9))
+
 ## [0.0.1-beta5](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta4...v0.0.1-beta5) (2026-01-18)
 
 
