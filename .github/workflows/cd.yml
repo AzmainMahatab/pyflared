@@ -2,7 +2,7 @@ name: CD
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
 
 permissions:
   contents: write
@@ -19,6 +19,9 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
 
   build-sdist:
     needs: release-please
@@ -44,7 +47,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+        os: [ ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest ]
     steps:
       - uses: actions/checkout@v6
       - uses: pypa/hatch@install
@@ -59,7 +62,7 @@ jobs:
 
   # JOB 3: PUBLISHER (PyPI + GitHub + GHCR)
   publish:
-    needs: [release-please, build-sdist, build-wheels]
+    needs: [ release-please, build-sdist, build-wheels ]
     if: ${{ needs.release-please.outputs.release_created }}
     runs-on: ubuntu-latest
     steps:
