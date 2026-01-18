@@ -97,7 +97,7 @@ pyflared --help
 ### Commands
 
 | Command                             | Description                              |
-|-------------------------------------|------------------------------------------|
+| ----------------------------------- | ---------------------------------------- |
 | `pyflared version`                  | Show the bundled cloudflared version     |
 | `pyflared tunnel quick <service>`   | Create a quick tunnel to a local service |
 | `pyflared tunnel mapped <pairs...>` | Create DNS-mapped tunnel(s)              |
@@ -106,7 +106,7 @@ pyflared --help
 ### Options for `tunnel mapped`
 
 | Option               | Description                                                       |
-|----------------------|-------------------------------------------------------------------|
+| -------------------- | ----------------------------------------------------------------- |
 | `--keep-orphans, -k` | Preserve orphan tunnels (prevents default removal)                |
 | `--tunnel-name, -n`  | Specify a custom tunnel name (default: `hostname_YYYY-MM-DD_...`) |
 | `--verbose, -v`      | Show detailed cloudflared logs                                    |
@@ -116,7 +116,7 @@ pyflared --help
 ### Environment Variables
 
 | Variable               | Description                                     |
-|------------------------|-------------------------------------------------|
+| ---------------------- | ----------------------------------------------- |
 | `CLOUDFLARE_API_TOKEN` | Your Cloudflare API token for tunnel management |
 
 ### API Token Permissions
@@ -126,6 +126,14 @@ For DNS-mapped tunnels, your API token needs the following permissions:
 - **Account** > **Cloudflare Tunnel** > **Edit**
 - **Zone** > **DNS** > **Edit**
 - **Zone** > **Zone** > **Read**
+
+## ❓ Troubleshooting
+
+### SSL Handshake Failed (Error 525)
+
+If you see an **Error 525** page ("SSL handshake failed") immediately after creating a tunnel, don't worry—this is a temporary issue. Cloudflare's edge network may take a few moments to fully propagate the tunnel configuration.
+
+**What to do:** Simply wait 1-2 minutes and refresh the page. The error will resolve automatically once the tunnel is fully established.
 
 ## 🛠️ Development
 
