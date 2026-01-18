@@ -22,7 +22,7 @@ jobs:
       - name: Install Hatch
         uses: pypa/hatch@install
         with:
-          version: '1.15.1' #TODO: remove this when hatch > 1.16.2 is released
+          version: '1.16.2' #TODO: remove this when hatch > 1.16.2 is released
 
       - name: Run tests
         run: hatch test -- -s
