@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.1-beta3](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta2...v0.0.1-beta3) (2026-01-18)
+
+
+### Bug Fixes
+
+* fix linux build script ([574fda1](https://github.com/AzmainMahatab/pyflared/commit/574fda1679d4ab1f3674025d9f2739c6b4200541))
+
 ## [0.0.1-beta2](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta1...v0.0.1-beta2) (2026-01-18)
 
 
