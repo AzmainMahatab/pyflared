@@ -3,7 +3,7 @@
     ".": {
       "release-type": "python",
       "prerelease": true,
-      "prerelease-type": "beta",
+      "prerelease-type": "b",
       "bump-minor-pre-major": true,
       "bump-patch-for-minor-pre-major": true,
       "extra-files": [
