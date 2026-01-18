@@ -19,7 +19,7 @@ console = Console(stderr=True)
 base_url = "https://github.com/cloudflare/cloudflared/releases/download"
 cloudflared_gh_api = "https://api.github.com/repos/cloudflare/cloudflared/releases/latest"
 
-tgz = ".tar.gz"
+tgz = ".tgz"
 
 
 class CloudFlareBinary:
