@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.0.1-beta5](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta4...v0.0.1-beta5) (2026-01-18)
+
+
+### Bug Fixes
+
+* version bump ([c1cbb9d](https://github.com/AzmainMahatab/pyflared/commit/c1cbb9d1161e2e44c89932f3bcee71f082959f7a))
+
 ## [0.0.1-beta4](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta3...v0.0.1-beta4) (2026-01-18)
 
 
