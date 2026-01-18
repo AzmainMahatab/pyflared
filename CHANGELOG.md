@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.1-beta4](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta3...v0.0.1-beta4) (2026-01-18)
+
+
+### Bug Fixes
+
+* docker ci workflow fix ([c2c696c](https://github.com/AzmainMahatab/pyflared/commit/c2c696cd24e8b79b7e9ecb38a02d44a7ad6d4eb7))
+* macros build script [#2](https://github.com/AzmainMahatab/pyflared/issues/2) ([c2c696c](https://github.com/AzmainMahatab/pyflared/commit/c2c696cd24e8b79b7e9ecb38a02d44a7ad6d4eb7))
+
 ## [0.0.1-beta3](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta2...v0.0.1-beta3) (2026-01-18)
 
 
