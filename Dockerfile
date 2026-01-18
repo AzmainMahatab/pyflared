@@ -2,11 +2,8 @@
 FROM python:3.12-slim-bookworm AS builder
 COPY --from=docker.io/astral/uv:latest /uv /uvx /bin/
 
-# Set PATH so that 'hatch' is found immediately after install
-#ENV PATH="/root/.local/bin:$PATH"
 # Install Build Tools BEFORE copying source code
 # This layer will now be cached forever, regardless of code changes.
-# RUN uv tool install hatch
 RUN uv pip install --system hatch
 
 WORKDIR /app
@@ -22,13 +19,21 @@ COPY . .
 # python build script instead of Bash logic
 RUN python scripts/build.py
 
+# ============================================================================
+# Final Stage
+# ============================================================================
 FROM python:3.12-alpine
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
-#ENV PATH="/root/.local/bin:$PATH"
 WORKDIR /app
+
 COPY --from=builder /app/dist/*.whl ./
-#RUN uv tool install ./*linux*.whl
-RUN uv pip install --system ./*linux*.whl
-RUN rm *.whl # Remove whls to save image size
+
+# Dynamically detect architecture and install the matching wheel
+# uname -m returns: x86_64, aarch64, armv7l, etc.
+RUN set -ex; \
+    ARCH=$(uname -m); \
+    uv pip install --system ./*manylinux*${ARCH}*.whl; \
+    rm -f *.whl
+
 ENTRYPOINT ["pyflared"]
 CMD ["--help"]
