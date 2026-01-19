@@ -32,7 +32,7 @@ jobs:
 
       - name: Build sdist
         run: hatch build -t sdist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: dist-sdist
           path: dist/*.tar.gz
@@ -60,7 +60,7 @@ jobs:
       - name: Build Wheel
         run: hatch build -t wheel
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: wheels-${{ matrix.os }}
           path: dist/*.whl
@@ -75,7 +75,7 @@ jobs:
       - uses: actions/checkout@v6
 
       # 2. Download artifacts
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: dist
           merge-multiple: true
