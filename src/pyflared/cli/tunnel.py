@@ -1,35 +1,19 @@
 import asyncio
 import logging
-import re
 import sys
 
+import pyflared
 import typer
 from pydantic import SecretStr
-from rich.console import Console
+from pyflared import _patterns
+from pyflared.api_sdk.parse import Mapping
+from pyflared.api_sdk.tunnel_manager import TunnelManager
+from pyflared.cli.common import err_console
+from pyflared.log.config import isolated_logging
+from pyflared.shared.types import OutputChannel
 from rich.panel import Panel
 
-import pyflared._commands
-from pyflared import _patterns
-from pyflared.api_sdk.tunnel_manager import TunnelManager
-from pyflared.log.config import isolated_logging
-from pyflared.shared.types import Mappings, OutputChannel
-
-err_console = Console(stderr=True)
-
-app = typer.Typer(help="Pyflared, a tool that helps auto configuring cloudflared tunnels")
-
-
-@app.command()
-def version():
-    """Show version info."""
-    v: str = asyncio.run(pyflared.binary_version())
-    typer.echo(v)
-
-    # typer.Exit(code=1)
-
-
 tunnel_subcommand = typer.Typer(help="Use for creating quick tunnels and dns mapped tunnel")
-app.add_typer(tunnel_subcommand, name="tunnel")  # tool tunnel
 
 
 def display_tunnel_info(url: str) -> None:
@@ -50,42 +34,6 @@ def display_tunnel_info(url: str) -> None:
     )
 
     err_console.print(panel)
-
-
-def clean_domain(url: str) -> str:
-    """
-    Removes 'http://' or 'https://' from the start,
-    AND removes a trailing '/' from the end.
-    """
-    # ^https?://  -> Matches http:// or https:// at the START
-    # |           -> OR
-    # /$          -> Matches a / at the END
-    return re.sub(r"^https?://|/$", "", url, flags=re.IGNORECASE)
-
-
-def normalize_if_local_url(url: str) -> str:
-    # 1. Always strip the trailing slash(es) first
-    url = url.rstrip("/")
-
-    # 2. Case: "8000" -> "http://localhost:8000"
-    # Checks if the entire string is just numbers
-    if url.isdigit():
-        return f"http://localhost:{url}"
-
-    # 3. Case: "localhost:8000" -> "http://localhost:8000"
-    if url.startswith("localhost"):
-        return f"http://{url}"
-
-    # 4. Default: Return as is (e.g. already has http://)
-    return url
-
-
-def parse_pair(value: str) -> tuple[str, str]:
-    # --- Validator ---
-    if "=" not in value:
-        raise typer.BadParameter(f"Format must be 'domain=service', got: {value}")
-    domain, service = value.split("=", 1)
-    return clean_domain(domain), normalize_if_local_url(service)
 
 
 def print_all(line: bytes, _: OutputChannel):
@@ -167,10 +115,8 @@ def pretty_tunnel_status(line: bytes, _: OutputChannel):
 @tunnel_subcommand.command("mapped")
 def mapped_tunnel(
         pair_args: list[str] = typer.Argument(
-            ...,
             metavar="DOMAIN=SERVICE",  # Changes display in usage synopsis
             help="List of mappings in the format 'domain=service'.",
-            show_default=False
         ),
         keep_orphans: bool = typer.Option(
             False,
@@ -196,7 +142,7 @@ def mapped_tunnel(
         You can pass multiple pairs separated by spaces.
 
         Example:
-          $ pyflared tunnel mapped example.com=localhost:8000 example2.com=localhost:1234
+          $ pyflared tunnel mapped example.com=localhost:8000 example2.com=http://localhost:1234 example3.com=https://localhost:1234 example4.com=1234
     """
 
     if not api_token:
@@ -204,8 +150,9 @@ def mapped_tunnel(
         api_token = SecretStr(typer.prompt("Please enter your CF API token", hide_input=True))
 
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
-        pair_dict = Mappings(parse_pair(p) for p in pair_args)
+        # pair_dict = Mappings(parse_pair(p) for p in pair_args)
+        pairs = [Mapping.from_str(p) for p in pair_args]
         tunnel = pyflared.run_dns_fixed_tunnel(
-            pair_dict, api_token=api_token.get_secret_value(), remove_orphan=not keep_orphans,
+            pairs, api_token=api_token.get_secret_value(), remove_orphan=not keep_orphans,
             tunnel_name=tunnel_name)  # TODO: pass remove_orphan
         asyncio.run(tunnel.start_background([pretty_tunnel_status]))

@@ -36,6 +36,7 @@ dependencies = [
     "beartype",
     "pydantic",
     "pydantic_settings",
+    "validators>=0.35.0",
 ]
 
 [project.urls]
@@ -80,6 +81,7 @@ extra-dependencies = [
 ]
 
 [tool.pytest.ini_options]
+addopts = "-vv"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 # --- Added Logging Configuration ---
@@ -98,7 +100,7 @@ ignore = [
 ]
 [tool.ruff.lint.per-file-ignores]
 # Ignore "Boolean Trap" errors just for the CLI file
-"src/pyflared/cli.py" = ["FBT001"]
+"src/pyflared/cli/**" = ["FBT001"]
 # Ignore the "Use of assert" rule in all test files
 "tests/**/*.py" = ["S101"]
 

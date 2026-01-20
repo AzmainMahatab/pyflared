@@ -85,17 +85,16 @@ def get_wheel_platform_tag() -> str:
     if SYSTEM == "linux":
         arch = ARCH_TO_WHEEL_LINUX.get(MACHINE, MACHINE)
         return f"linux_{arch}"
-    elif SYSTEM == "darwin":
+    if SYSTEM == "darwin":
         arch = ARCH_TO_WHEEL_MACOS.get(MACHINE, MACHINE)
         # arm64 requires macOS 11+, x86_64 can go back to 10.9
         min_version = "11_0" if arch == "arm64" else "10_9"
         return f"macosx_{min_version}_{arch}"
-    elif SYSTEM == "windows":
+    if SYSTEM == "windows":
         arch = ARCH_TO_WHEEL_WINDOWS.get(MACHINE, MACHINE)
         return f"win_{arch}"
-    else:
-        # Fallback for unknown systems
-        return f"{SYSTEM}_{MACHINE}"
+    # Fallback for unknown systems
+    return f"{SYSTEM}_{MACHINE}"
 
 
 # =============================================================================
@@ -275,7 +274,6 @@ class BuildHook(BuildHookInterface):
 
     def clean(self, versions: list[str]) -> None:
         """Clean the build directory.
-        
         Note: This is not fully correct for now, hoping it to be fixed on the hatch side.
         See: https://github.com/pypa/hatch/issues/2147
         """

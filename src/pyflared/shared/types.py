@@ -11,7 +11,7 @@ from cloudflare.types.zones import Zone
 type AwaitableMaybe[T] = T | Awaitable[T]
 
 type Domain = str
-type Service = str
+# type Service = str
 type ProcessArgs = tuple[str, ...]
 
 type ZoneId = str
@@ -33,8 +33,8 @@ class AccountIds(set[ZoneId]):
     pass
 
 
-class Mappings(dict[Domain, Service]):
-    pass
+# class Mappings(dict[Domain, Service]):
+#     pass
 
 
 class ZoneNameDict(dict[ZoneName, Zone]):

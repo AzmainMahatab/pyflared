@@ -16,12 +16,22 @@ from loguru import logger
 from pydantic import SecretStr
 
 from pyflared import consts
-from pyflared.api_sdk.fetch import fetch_zones_account_ids
+from pyflared.api_sdk.ingress import fix_ingress_order
 from pyflared.api_sdk.types import CustomTunnel
+from pyflared.api_sdk.parse import Mapping
 from pyflared.log.pretty import Pretty
-from pyflared.shared.types import CreationRecords, Domain, Mappings, TunnelIds, ZoneId, ZoneNameDict, ZoneNames
+from pyflared.shared.types import (
+    AccountIds,
+    CreationRecords,
+    Domain,
+    TunnelIds,
+    ZoneId,
+    ZoneIds,
+    ZoneNameDict,
+    ZoneNames,
+)
 
-active_connection_error_code: Final[int] = 1022
+tunnel_active_connection_error_code: Final[int] = 1022
 
 
 def auto_tunnel_name() -> str:
@@ -58,7 +68,7 @@ def _is_orphan(tunnel: CloudflareTunnel) -> bool:
     #         tunnel.status == "down" and tunnel.conns_inactive_at and tunnel.conns_inactive_at < threshold)
     # )
     # Must have our tag + inactive or down (0 or -1 connections)
-    return tunnel.metadata.get(consts.api_managed_tag) and tunnel.status in ("inactive", "down")
+    return tunnel.metadata.get(consts.api_managed_tag) and tunnel.status in ("inactive", "down")  # type: ignore
 
 
 def find_zone(zones: ZoneNameDict, domain: Domain) -> Zone:
@@ -71,10 +81,6 @@ def find_zone(zones: ZoneNameDict, domain: Domain) -> Zone:
         if found_zone := zones.get(candidate):
             return found_zone
     raise ValueError(f"No matching zone found for: {domain}")
-
-
-def dict_first[K, V](d: dict[K, V]) -> tuple[K, V]:
-    return next(iter(d.items()))
 
 
 class TunnelManager:
@@ -117,7 +123,7 @@ class TunnelManager:
         except BadRequestError as e:
             error_codes = (err.code for err in e.errors)
 
-            if active_connection_error_code in error_codes:
+            if tunnel_active_connection_error_code in error_codes:
                 await self.cleanup_tunnel_connection(tunnel)
                 # retry
                 await self.delete_tunnel(tunnel)
@@ -173,7 +179,7 @@ class TunnelManager:
         tunnel_check_time = datetime.now(UTC)
 
         # We are requesting the zones first and collecting the account_ids to bypass 1 less network call
-        zone_ids, account_ids = await fetch_zones_account_ids(self.client)
+        zone_ids, account_ids = await self.zones_n_account_ids()
 
         # Iterate over all tunnels and collect active ones
         active_tunnels = TunnelIds()
@@ -212,6 +218,15 @@ class TunnelManager:
         async for zone in self.zones():
             zones[zone.name] = zone
         return zones
+
+    async def zones_n_account_ids(self) -> tuple[ZoneIds, AccountIds]:
+        zone_ids = ZoneIds()
+        account_ids = AccountIds()
+        async for zone in self.zones():
+            zone_ids.add(zone.id)
+            account_ids.add(zone.account.id)
+
+        return zone_ids, account_ids
 
     @beartype
     async def create_tunnel(
@@ -252,7 +267,7 @@ class TunnelManager:
             )
 
     async def fixed_dns_tunnel(
-            self, mappings: Mappings,
+            self, mappings: list[Mapping],
             tunnel_name: str | None = None) -> SecretStr:  # Tunnel Token
 
         if not mappings:
@@ -260,15 +275,16 @@ class TunnelManager:
 
         # Check if dns is already mapped by someone else
         all_records = await self.all_dns_records()
-        common_names = all_records & mappings.keys()
-        if common_names:
-            raise RuntimeError(f"Domain(s) already mapped: {Pretty(common_names)}")
+        # common_names = all_records & mappings.keys()  # domainset
+        # if common_names:
+        #     raise RuntimeError(f"Domain(s) already mapped: {Pretty(common_names)}")
 
         # Find the zone for the first domain
         zone_dict = await self.zone_name_dict()
 
-        first_domain, _ = dict_first(mappings)
-        first_zone = find_zone(zone_dict, first_domain)
+        # first_domain, _ = dict_firstentry(mappings)
+        first_domain = mappings[0].domain
+        first_zone = find_zone(zone_dict, first_domain.hostname)
 
         # Make tunnel on first matched zone #TODO: Check if tunnel can be created with the ingresses in one go
         tunnel = await self.create_auto_tunnel(first_zone.account.id, tunnel_name=tunnel_name)
@@ -277,20 +293,24 @@ class TunnelManager:
         ingresses: list[ConfigIngress] = []
         creation_records = CreationRecords()
 
-        for (domain, service) in mappings.items():
+        # Almost vital portion
+        for (domain, service) in mappings:
+            if domain in all_records:
+                raise RuntimeError(f"{domain} already mapped: {Pretty(all_records)}")
             ingresses.append(
-                ConfigIngress(hostname=domain, service=service)
+                service.ingress(domain)
             )
 
-            zone = find_zone(zone_dict, domain)
-            record = tunnel.build_dns_record(domain)
+            zone = find_zone(zone_dict, domain.hostname)
+            record = tunnel.build_dns_record(domain.hostname)
             creation_records[zone.id].append(record)
 
-        ingresses.append(
-            # ConfigIngress(hostname="*." + first_zone.name, service="http://127.0.0.1:8080"),
-            ConfigIngress(service="http_status:404"),  # type: ignore # default fallback
-        )
+        # ingresses.append(
+        #     # ConfigIngress(hostname="*." + first_zone.name, service="http://127.0.0.1:8080"),
+        #     ConfigIngress(service="http_status:404"),  # type: ignore # default fallback
+        # )
 
+        ingresses = fix_ingress_order(ingresses)
         async with asyncio.TaskGroup() as tg:
             # Update tunnel with ingresses and create DNS records in async
 

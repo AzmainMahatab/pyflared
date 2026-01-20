@@ -1,41 +1,38 @@
 import asyncio
 import atexit
-import os
 import pathlib
 import re
 import stat
 from collections.abc import Iterator
 from contextlib import ExitStack
-from functools import cache, cached_property
+from functools import cache
 from importlib.resources import as_file, files
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
 from loguru import logger
 
-from pyflared._patterns import starting_tunnel, config_pattern, tunnel_connection_pattern
+from pyflared import IS_WINDOWS
+from pyflared._patterns import config_pattern, starting_tunnel, tunnel_connection_pattern
 from pyflared.api_sdk.tunnel_manager import TunnelManager
 from pyflared.binary.binary_decorator import BinaryApp
-from pyflared.shared.types import Chunk, ChunkSignal, Mappings, OutputChannel
+from pyflared.api_sdk.parse import Mapping
+from pyflared.shared.types import Chunk, ChunkSignal, OutputChannel
 
-__all__ = ["binary_version", "run_quick_tunnel", "run_token_tunnel", "run_dns_fixed_tunnel"]
+__all__ = ["binary_path", "binary_version", "run_dns_fixed_tunnel", "run_quick_tunnel", "run_token_tunnel"]
 
 
-@cached_property
+@cache
 def _bin_dir():
     # Bin directory lives inside the installed package
     return Path(__file__).resolve().parent / "bin"
-    # return files('myapp.templates')
 
 
-_binary_filename = f"cloudflared{".exe" if os.name == "nt" else ""}"
-
-
-# + (".exe" if os.name == "nt" else "")
+_binary_filename = f"cloudflared{".exe" if IS_WINDOWS else ""}"
 
 
 def _ensure_posix_executable(path: pathlib.Path) -> None:
-    if os.name != "nt":
+    if not IS_WINDOWS:
         mode = path.stat().st_mode
         path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
@@ -58,7 +55,7 @@ atexit.register(_file_manager.close)
 
 
 @cache
-def get_path() -> pathlib.Path:
+def binary_path() -> pathlib.Path:
     # 1. Get package root
     root = files(__package__)
     binary_ref = root / 'bin' / _binary_filename
@@ -84,7 +81,7 @@ def get_path() -> pathlib.Path:
 token_tunnel_cmd = "tunnel", "run", "--token"
 quick_tunnel_cmd = "tunnel", "--no-autoupdate", "--url"
 
-cloudflared = BinaryApp(get_path())
+cloudflared = BinaryApp(binary_path())
 
 
 @cloudflared.instant()
@@ -140,8 +137,8 @@ async def fixed_tunnel_tracing(stream_reader: asyncio.StreamReader, _: OutputCha
 
 @cloudflared.daemon(stream_chunker=fixed_tunnel_tracing)
 async def run_dns_fixed_tunnel(
-        mappings: Mappings, api_token: str | None = None, *,
-        remove_orphan: bool = True, tunnel_name: str | None = None):
+        mappings: list[Mapping], tunnel_name: str | None = None,
+        api_token: str | None = None, remove_orphan: bool = True, ):
     tunnel_manager = TunnelManager(api_token)
     if remove_orphan:
         await tunnel_manager.remove_orphans()
