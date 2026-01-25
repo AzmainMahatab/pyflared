@@ -7,7 +7,7 @@ import typer
 from pydantic import BaseModel, ValidationError
 from pydantic.fields import FieldInfo
 from pydantic_core import PydanticUndefined
-from typer.models import ArgumentInfo, OptionInfo
+from typer.models import ArgumentInfo, OptionInfo, ParameterInfo
 
 
 def _unwrap_annotation(annotation: type[Any] | Any) -> type[Any] | Any:
@@ -43,7 +43,7 @@ def _find_pydantic_model(
     return None, None, -1
 
 
-def _get_typer_info(field_info: FieldInfo) -> ArgumentInfo | OptionInfo | None:
+def _extract_typer_info(field_info: FieldInfo) -> ParameterInfo | None:
     """Extract typer info (Argument or Option) from field metadata."""
     return next(
         (m for m in field_info.metadata if isinstance(m, (ArgumentInfo, OptionInfo))),
@@ -51,35 +51,21 @@ def _get_typer_info(field_info: FieldInfo) -> ArgumentInfo | OptionInfo | None:
     )
 
 
-def _resolve_default(field_info: FieldInfo) -> Any:
+def _get_typer_info(field_info: FieldInfo) -> ParameterInfo | None:
     """
-    Resolve the default value for a Pydantic field.
-
-    Returns:
-        Ellipsis (...) if field is required, otherwise the default value
-    """
-    return ... if field_info.default is PydanticUndefined else field_info.default
-
-
-def _create_typer_info(
-        field_info: FieldInfo,
-        typer_info: ArgumentInfo | OptionInfo | None,
-) -> ArgumentInfo | OptionInfo:
-    """
-    Create or update typer info object for a field.
+    Get typer_info object for a field.
 
     Args:
         field_info: Pydantic field information
-        typer_info: Existing typer info if provided in annotations
 
     Returns:
         ArgumentInfo or OptionInfo with appropriate defaults and help text
     """
-    real_default = _resolve_default(field_info)
+    real_default = _resolve_default_value(field_info)
     help_text = field_info.description or f"Sets the {field_info.alias or 'value'}"
 
-    if typer_info:
-        # Update existing typer info if needed
+    if typer_info := _extract_typer_info(field_info):
+        # Update existing typer info if exists/needed and return
         if typer_info.default in (..., None) and real_default is not ...:
             typer_info.default = real_default
         if not typer_info.help:
@@ -88,6 +74,16 @@ def _create_typer_info(
 
     # Create new Option by default
     return typer.Option(real_default, help=help_text)
+
+
+def _resolve_default_value(field_info: FieldInfo) -> Any:
+    """
+    Resolve the default value for a Pydantic field.
+
+    Returns:
+        Ellipsis (...) if field is required, otherwise the default value
+    """
+    return ... if field_info.default is PydanticUndefined else field_info.default
 
 
 def _create_cli_parameter(field_name: str, field_info: FieldInfo) -> inspect.Parameter:
@@ -102,7 +98,6 @@ def _create_cli_parameter(field_name: str, field_info: FieldInfo) -> inspect.Par
         inspect.Parameter configured for CLI usage
     """
     typer_info = _get_typer_info(field_info)
-    typer_info = _create_typer_info(field_info, typer_info)
 
     return inspect.Parameter(
         field_name,

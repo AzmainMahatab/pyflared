@@ -174,10 +174,6 @@ def _upsert_config(ssh_config: SSHConfig) -> None:
         raise e
 
 
-# @ssh_subcommand.command()
-# @pydantic_typer_parse
-# def add(ssh_config: SSHConfig):
-#     _upsert_config(ssh_config)
 @ssh_subcommand.command()
 @pydantic_typer_parse
 def add(ssh_config: SSHConfig):
