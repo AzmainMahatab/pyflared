@@ -1,158 +1,194 @@
 import inspect
 from collections.abc import Callable
 from functools import wraps
-from typing import Annotated, get_args, get_origin
+from typing import Annotated, Any, get_args, get_origin
 
 import typer
 from pydantic import BaseModel, ValidationError
+from pydantic.fields import FieldInfo
+from pydantic_core import PydanticUndefined
 from typer.models import ArgumentInfo, OptionInfo
 
 
-def pydantic_typer_parse(func: Callable) -> Callable:
+def _unwrap_annotation(annotation: type[Any] | Any) -> type[Any] | Any:
+    """Unwrap Annotated type to get the actual type."""
+    if get_origin(annotation) is Annotated:
+        args = get_args(annotation)
+        return args[0] if args else annotation
+    return annotation
+
+
+def _is_pydantic_model(annotation: type[Any] | Any) -> bool:
+    """Check if annotation is a Pydantic BaseModel subclass."""
+    try:
+        return isinstance(annotation, type) and issubclass(annotation, BaseModel)
+    except TypeError:
+        return False
+
+
+def _find_pydantic_model(
+        params: list[inspect.Parameter],
+) -> tuple[str, type[BaseModel], int] | tuple[None, None, int]:
+    """
+    Find the first Pydantic model parameter in the signature.
+
+    Returns:
+        Tuple of (param_name, model_type, index) if found, else (None, None, -1)
+    """
+    for i, param in enumerate(params):
+        annotation = _unwrap_annotation(param.annotation)
+        if _is_pydantic_model(annotation):
+            # Type narrowing - we know it's a BaseModel subclass here
+            return param.name, annotation, i
+    return None, None, -1
+
+
+def _get_typer_info(field_info: FieldInfo) -> ArgumentInfo | OptionInfo | None:
+    """Extract typer info (Argument or Option) from field metadata."""
+    return next(
+        (m for m in field_info.metadata if isinstance(m, (ArgumentInfo, OptionInfo))),
+        None,
+    )
+
+
+def _resolve_default(field_info: FieldInfo) -> Any:
+    """
+    Resolve the default value for a Pydantic field.
+
+    Returns:
+        Ellipsis (...) if field is required, otherwise the default value
+    """
+    return ... if field_info.default is PydanticUndefined else field_info.default
+
+
+def _create_typer_info(
+        field_info: FieldInfo,
+        typer_info: ArgumentInfo | OptionInfo | None,
+) -> ArgumentInfo | OptionInfo:
+    """
+    Create or update typer info object for a field.
+
+    Args:
+        field_info: Pydantic field information
+        typer_info: Existing typer info if provided in annotations
+
+    Returns:
+        ArgumentInfo or OptionInfo with appropriate defaults and help text
+    """
+    real_default = _resolve_default(field_info)
+    help_text = field_info.description or f"Sets the {field_info.alias or 'value'}"
+
+    if typer_info:
+        # Update existing typer info if needed
+        if typer_info.default in (..., None) and real_default is not ...:
+            typer_info.default = real_default
+        if not typer_info.help:
+            typer_info.help = help_text
+        return typer_info
+
+    # Create new Option by default
+    return typer.Option(real_default, help=help_text)
+
+
+def _create_cli_parameter(field_name: str, field_info: FieldInfo) -> inspect.Parameter:
+    """
+    Create an inspect.Parameter for a Pydantic field.
+
+    Args:
+        field_name: Name of the field
+        field_info: Pydantic field information
+
+    Returns:
+        inspect.Parameter configured for CLI usage
+    """
+    typer_info = _get_typer_info(field_info)
+    typer_info = _create_typer_info(field_info, typer_info)
+
+    return inspect.Parameter(
+        field_name,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        annotation=field_info.annotation,
+        default=typer_info,
+    )
+
+
+def _format_validation_errors(error: ValidationError) -> str:
+    """
+    Format Pydantic validation errors into a readable string.
+
+    Args:
+        error: Pydantic ValidationError
+
+    Returns:
+        Formatted error message string
+    """
+    error_msgs = (f"{' -> '.join(map(str, err['loc']))}: {err['msg']}"
+                  for err in error.errors())
+
+    return "[Error] Validation failed:\n" + "\n".join(error_msgs)
+
+
+def pydantic_typer_parse[P, R](func: Callable[P, R]) -> Callable[..., R]:
     """
     Decorator to explode a Pydantic model into Typer CLI arguments.
+
+    This decorator automatically converts Pydantic model fields into Typer CLI
+    parameters, preserving validation and type checking.
+
     Usage:
         @app.command()
         @pydantic_typer_parse
-        def my_cmd(config: MyModel): ...
+        def my_cmd(config: MyModel) -> None:
+            ...
+
+    Args:
+        func: Function with a Pydantic model parameter to be transformed
+
+    Returns:
+        Wrapped function with exploded CLI parameters
+
+    Note:
+        The function must have exactly one Pydantic BaseModel parameter.
+        If no model is found, the original function is returned unchanged.
     """
     sig = inspect.signature(func)
     params = list(sig.parameters.values())
 
-    # 1. AUTO-DETECT: Find the argument that is a Pydantic Model
-    model_arg_name = None
-    model_type = None
-    model_index = -1
+    # Find the Pydantic model parameter
+    model_arg_name, model_type, model_index = _find_pydantic_model(params)
 
-    for i, param in enumerate(params):
-        # Unwrap Annotated if present to check type
-        annotation = param.annotation
-        if get_origin(annotation) is Annotated:
-            annotation = get_args(annotation)[0]
-
-        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-            model_arg_name = param.name
-            model_type = annotation
-            model_index = i
-            break
-
-    if not model_type:
+    # Early return if no model found
+    if model_type is None or model_arg_name is None:
         return func
 
-    # 2. PREPARE NEW PARAMETERS
-    del params[model_index]
+    # Replace model parameter with exploded CLI parameters
+    new_params = [
+        _create_cli_parameter(field_name, field_info)
+        for field_name, field_info in model_type.model_fields.items()
+    ]
 
-    new_params = []
-
-    # Iterate over the model fields to create Typer params
-    for field_name, field_info in model_type.model_fields.items():
-
-        # A. Check for Explicit Typer Override (Argument or Option)
-        # In Pydantic v2, extra metadata from Annotated ends up in field_info.metadata
-        typer_info = next(
-            (m for m in field_info.metadata if isinstance(m, (ArgumentInfo, OptionInfo))),
-            None
-        )
-
-        # B. Resolve Defaults
-        # If Pydantic default is Required (PydanticUndefined) or Ellipsis (...), Typer needs ...
-        real_default = field_info.default
-        if str(real_default) == 'PydanticUndefined':
-            real_default = ...
-
-        # Description fallback
-        help_text = field_info.description or f"Sets the {field_name}"
-
-        # C. Build or Modify the Typer Info Object
-        if typer_info:
-            # If user provided Annotated[T, typer.Argument(...)], use it.
-            # We only overwrite default if it's currently generic (Empty/Required)
-            if typer_info.default == ... or typer_info.default is None:
-                # Only override if the Pydantic model actually has a value to offer
-                if real_default is not ...:
-                    typer_info.default = real_default
-
-            if not typer_info.help:
-                typer_info.help = help_text
-        else:
-            # Default behavior: Map to typer.Option (flags)
-            typer_info = typer.Option(real_default, help=help_text)
-
-        # D. Create the Parameter
-        param = inspect.Parameter(
-            field_name,
-            inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            annotation=field_info.annotation,
-            default=typer_info,
-        )
-        new_params.append(param)
-
-    # 3. Insert and Wrap
-    for p in reversed(new_params):
-        params.insert(model_index, p)
-
+    # Replace the single model param with multiple field params using slice assignment
+    params[model_index:model_index + 1] = new_params
     final_sig = sig.replace(parameters=params)
 
     @wraps(func)
-    def wrapper(**kwargs):
-        model_kwargs = {}
-        func_kwargs = {}
+    def wrapper(**kwargs: Any) -> R:
 
-        # Separate args meant for the model vs the function
-        for key, value in kwargs.items():
-            if key in model_type.model_fields:
-                model_kwargs[key] = value
-            else:
-                func_kwargs[key] = value
+        # Partition kwargs into model and function arguments
+        model_field_names = frozenset(model_type.model_fields)
+        model_kwargs: dict[str, Any] = {k: v for k, v in kwargs.items() if k in model_field_names}
+        func_kwargs: dict[str, Any] = {k: v for k, v in kwargs.items() if k not in model_field_names}
 
-        # 4. INSTANTIATE & VALIDATE
+        # Validate and instantiate model
         try:
-            # Pydantic validation happens here (including regex)
-            model_instance = model_type(**model_kwargs)
+            model_instance: BaseModel = model_type(**model_kwargs)
         except ValidationError as e:
-            # Format Pydantic errors into nice CLI errors
-            error_msgs = []
-            for err in e.errors():
-                loc = " -> ".join(str(l) for l in err['loc'])
-                msg = err['msg']
-                error_msgs.append(f"{loc}: {msg}")
+            typer.echo(_format_validation_errors(e), err=True)
+            raise typer.Exit(code=1) from e
 
-            # Raise TyperExit or BadParameter to show help nicely
-            typer.echo("[Error] Validation failed:\n" + "\n".join(error_msgs), err=True)
-            raise typer.Exit(code=1)
-
+        # Call original function with model instance
         func_kwargs[model_arg_name] = model_instance
         return func(**func_kwargs)
 
     wrapper.__signature__ = final_sig
     return wrapper
-
-# app = typer.Typer()
-# class ConnectionConfig(BaseModel):
-#     # 1. Simple Flag (Uses Field)
-#     url: str = Field(..., description="The server URL")
-#
-#     # 2. Positional Argument (Uses Annotated + typer.Argument)
-#     mode: Annotated[str, typer.Argument(help="Connection mode (read/write)")]
-#
-#     # 3. Complex Type (Uses Annotated + typer.Option with parser)
-#     # Note: We rely on the USER to provide the parser logic here, exactly as you wanted.
-#     token: Annotated[SecretStr | None, typer.Option(
-#         "None",
-#         envvar="CLOUDFLARE_API_TOKEN",
-#         parser=SecretStr,  # <--- User handles the parsing logic
-#         help="CF API Token",
-#     )]
-#
-#
-# @app.command()
-# @pydantic_parse
-# def start(config: ConnectionConfig):
-#     print(f"Connecting to {config.url}")
-#     print(f"Token value: {config.token.get_secret_value()}")
-#
-#
-# if __name__ == "__main__":
-#     # Test showing help
-#     # app(args=["--help"])
-#     app(args=["start", "--url", "https://example.com"])
