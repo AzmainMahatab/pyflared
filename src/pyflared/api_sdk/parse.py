@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from functools import cached_property
 from typing import Final, NamedTuple
 from urllib.parse import ParseResult, parse_qs, urlparse
 
@@ -11,176 +12,291 @@ from cloudflare.types.zero_trust.tunnels.cloudflared.configuration_update_params
 
 type Domain = ParseResult
 
-CLOUDFLARE_SUPPORTED_SCHEMES = {"http", "https", "unix", "tcp", "ssh", "rdp", "unix+tls", "smb"}
-"""
-Supported protocols: http://, https://, unix://, tcp://, ssh://, rdp://,
-    unix+tls://, smb://
-"""
-CLOUDFLARE_HTTP_STATUS_RE = re.compile(r"^http_status:\d+$")
-"""
-Alternatively can return a HTTP status code
-    http_status:[code] e.g. 'http_status:404'.
-"""
+# Cloudflare supported schemes
+CLOUDFLARE_SUPPORTED_SCHEMES: Final[frozenset[str]] = frozenset({
+    "http", "https", "unix", "tcp", "ssh", "rdp", "unix+tls", "smb", "ws", "wss"
+})
 
-tcp = "tcp"
+# Special Cloudflare services that don't require a URL
+CLOUDFLARE_SPECIAL_SERVICES: Final[frozenset[str]] = frozenset({
+    "hello_world", "hello-world", "bastion", "socks5"
+})
+
+# HTTP status service pattern: http_status:<code>
+CLOUDFLARE_HTTP_STATUS_RE: Final[re.Pattern[str]] = re.compile(r"^http_status:\d+$")
+
+# Local hostnames for TLS verification defaults
+LOCAL_HOSTNAMES: Final[frozenset[str]] = frozenset({"localhost", "127.0.0.1", "::1"})
+
+# Local schemes (unix sockets)
+LOCAL_SCHEMES: Final[frozenset[str]] = frozenset({"unix", "unix+tls"})
+
+# Port to scheme mapping
 PORT_TO_SCHEMES: Final[dict[int, str]] = {
-    80: "http", 443: "https", 22: "ssh", 3389: "rdp",
-    3306: tcp, 5432: tcp, 6379: tcp, 27017: tcp
+    80: "http",
+    443: "https",
+    22: "ssh",
+    3389: "rdp",
+    3306: "tcp",
+    5432: "tcp",
+    6379: "tcp",
+    27017: "tcp",
 }
 
 
+def _is_special_cloudflare_service(url: str) -> bool:
+    """Check if URL is a special Cloudflare service or http_status pattern.
+
+    Args:
+        url: The URL string to check
+
+    Returns:
+        True if the URL is a special service, False otherwise
+        
+    Examples:
+        >>> _is_special_cloudflare_service("hello_world")
+        True
+        >>> _is_special_cloudflare_service("bastion")
+        True
+        >>> _is_special_cloudflare_service("http_status:404")
+        True
+        >>> _is_special_cloudflare_service("localhost:8000")
+        False
+    """
+    return url.lower() in CLOUDFLARE_SPECIAL_SERVICES or bool(CLOUDFLARE_HTTP_STATUS_RE.match(url))
+
+
+def _looks_like_port(value: str) -> bool:
+    if not value.isdigit():
+        return False
+    port = int(value)
+    return 1 <= port <= 65535
+
+
+def _extract_port_from_path(path: str) -> int | None:
+    """Extract port number from a path if it starts with a port.
+
+    Args:
+        path: Path string that might start with a port
+
+    Returns:
+        Port number if valid, None otherwise
+        
+    Examples:
+        >>> _extract_port_from_path("27017")
+        27017
+        >>> _extract_port_from_path("27017/path")
+        27017
+        >>> _extract_port_from_path("/var/run")
+        None
+    """
+    first_segment = path.lstrip("/").split("/")[0]
+    if _looks_like_port(first_segment):
+        return int(first_segment)
+    return None
+
+
 class Service(ParseResult):
-    """
-    Extended ParseResult that can self-verify SSL settings and generate Ingress Config.
-    """
+    """Extended ParseResult that can self-verify SSL settings and generate Ingress Config."""
 
     def __new__(cls, parsed: ParseResult):
         return super().__new__(cls, *parsed)
 
     @classmethod
-    def autocomplete_from_str(cls, url: str) -> Service:
-        """
-        Normalizes a lazy input string into a strict ParseResult.
-        Handles '8000', 'localhost:8000', 'unix:/path', 'app.com', etc.
+    def from_str(cls, url: str) -> Service:
+        """Normalizes a lazy input string into a strict ParseResult.
+
+        Handles various input formats:
+        - '8000' -> 'http://localhost:8000'
+        - 'localhost:8000' -> 'http://localhost:8000'
+        - 'unix:/path' -> 'unix:/path'
+        - 'app.com' -> 'http://app.com'
+        - etc.
+
+        Args:
+            url: Input URL string to normalize
+
+        Returns:
+            Normalized Service instance
         """
 
         parsed = urlparse(url)
-        # According to RFC 3986, underscores are illegal in URI schemes
-        if CLOUDFLARE_HTTP_STATUS_RE.match(url):
-            return cls(parsed)
-        # If user provides a supported scheme (e.g., https://), trust it as is.
-        if parsed.scheme in CLOUDFLARE_SUPPORTED_SCHEMES:
+
+        # Best case, the user already provided a valid URL
+        if _is_special_cloudflare_service(url) or parsed.scheme in CLOUDFLARE_SUPPORTED_SCHEMES:
             return cls(parsed)
 
-        scheme, netloc, path = parsed.scheme, parsed.netloc, parsed.path
+        # Case A: Network Location (host or port found)
+        # Examples:
+        #   "8000" -> 'http://localhost:8000'
+        #   "localhost:3000" -> 'http://localhost:3000'
+        #   "my-db:27017" -> 'tcp://my-db:27017'
+        #   "8000/api" -> 'http://localhost:8000/api'
+        if port := _extract_port_from_path(parsed.path):
+            scheme = PORT_TO_SCHEMES.get(port, "http")
+            assert not parsed.netloc  # For now, I'm expecting netloc to be empty, till I find a contrary example
+            netloc = parsed.scheme or "localhost"
+            return cls(urlparse(f"{scheme}://{netloc}:{parsed.path}")._replace(query=parsed.query))
 
-        # The "File Hack": Treat unknown path as File URI to separate Host vs Path
-        # logic: file://8000/api       -> netloc="8000", path="/api"
-        # logic: file://localhost:8000 -> netloc="localhost:8000", path=""
-        # logic: file:///var/run/sock  -> netloc="", path="/var/run/sock"
-        file_parsed = urlparse(f"file://{path}")
+        # Let's say anything else is a Unix Socket (For now, till I find a contrary example)
+        # Case B: Unix Socket (absolute path)
+        # Examples:
+        #   "/var/run/app.sock" -> 'unix:/var/run/app.sock'
+        #   "/tmp/redis.sock" -> 'unix:/tmp/redis.sock'
+        return cls(urlparse(f"unix:{parsed.path}")._replace(query=parsed.query))
 
-        # CASE A: Network Location (Host or Port found)
-        if file_parsed.netloc:
-            # 1. Just a port ("8000")
-            if file_parsed.netloc.isdigit():
-                port = int(file_parsed.netloc)
-                scheme = PORT_TO_SCHEMES.get(port, "http")
-                netloc = f"localhost:{port}"
-                # Important: Preserve the path (e.g. /api) that followed the port
-                path = file_parsed.path
-
-                # 2. Host:Port ("localhost:8000", "my-app:3000")
-            else:
-                # Re-parse with // to ensure robust port extraction
-                temp = urlparse(f"//{file_parsed.netloc}")
-                netloc = temp.netloc
-                # Logic check: If original had path "localhost:8000/api",
-                # file_parsed.path contains "/api". We must use it.
-                path = file_parsed.path
-
-                scheme = PORT_TO_SCHEMES.get(temp.port, "http") if temp.port else "http"
-
-        # CASE B: File Path (Unix Socket or Named Pipe)
-        elif file_parsed.path:
-            if file_parsed.path.startswith("/"):
-                # Unix: unix:/var/run/sock
-                x = urlparse(f"unix:{file_parsed.path}?{parsed.query}")
-                return cls(x)
-            if file_parsed.path.startswith("\\\\"):
-                # Windows: npipe:\\.\pipe\foo
-                x = urlparse(f"npipe:{file_parsed.path}?{parsed.query}")
-                return cls(x)
-
-        # Fallback / Final Construction
-        final_scheme = scheme if scheme else "http"
-        final_url = f"{final_scheme}://{netloc}{path}"
-
-        # Re-attach query parameters if they existed
-        if parsed.query:
-            final_url += f"?{parsed.query}"
-
-        return cls(urlparse(final_url))
-
-    @property
+    @cached_property
     def verify_tls(self) -> str | None:
-        """Extracts the 'verify' query parameter."""
+        """TLS verification parameter from query (?verify_tls)."""
         q_params = parse_qs(self.query)
-        return q_params.get('verify', [None])[0]
+        return q_params.get("verify_tls", [None])[-1]
 
-    def get_clean_service_url(self) -> str:
-        """Returns the service URL without the custom query params (like ?verify=)."""
-        # _replace returns a new instance of the class with the field updated.
-        # .geturl() reassembles the parts back into a string.
+    @cached_property
+    def host_header(self) -> str | None:
+        """Custom HTTP Host header from query (?host_header)."""
+        q_params = parse_qs(self.query)
+        return q_params.get("host_header", [None])[-1]
+
+    @cached_property
+    def is_local(self) -> bool:
+        """Check if the URL points to a local resource.
+
+        Returns:
+            True if the hostname is localhost-like or using unix sockets
+            
+        Examples:
+            >>> service = Service.from_str("localhost:8000")
+            >>> service.is_local
+            True
+            >>> service = Service.from_str("unix:/var/run/app.sock")
+            >>> service.is_local
+            True
+            >>> service = Service.from_str("example.com")
+            >>> service.is_local
+            False
+        """
+        return self.hostname in LOCAL_HOSTNAMES or self.scheme in LOCAL_SCHEMES
+
+    @cached_property
+    def service_url(self) -> str:
+        """Return the service URL without custom query params (like ?verify=).
+
+        Returns:
+            Clean service URL string
+        """
         return self._replace(query="").geturl()
 
+    @cached_property
+    def origin_config(self) -> ConfigIngressOriginRequest:
+        origin_request: ConfigIngressOriginRequest = {}
+
+        # Only apply TLS settings for HTTPS or Encrypted Sockets
+        if self.scheme in {"https", "unix+tls"}:
+            if self.verify_tls is not None:
+                verify_lower = self.verify_tls.lower()  # Cache it!
+
+                if verify_lower not in {"true", "false"}:
+                    # A. Explicit Domain Override (?verify=api.com)
+                    origin_request["origin_server_name"] = self.verify_tls
+                    origin_request["http_host_header"] = self.host_header or self.verify_tls
+                elif verify_lower == "false":
+                    # B. Explicit Disable
+                    origin_request["no_tls_verify"] = True
+                # C. Explicit/Force Enable (?verify=true) -> Do nothing (enabled by Default)
+            elif self.is_local:
+                # D. Smart Default (Locals)
+                origin_request["no_tls_verify"] = True
+
+        return origin_request
+
     def ingress(self, domain: Domain) -> ConfigIngress:
-        """Generates the full Cloudflare Ingress dictionary."""
+        """Generate the full Cloudflare Ingress configuration.
+
+        Args:
+            domain: Parsed domain information
+
+        Returns:
+            ConfigIngress dictionary
+
+        Raises:
+            ValueError: If domain includes a port or lacks a hostname
+        """
+        # We dont care about domain scheme
         if domain.port:
             raise ValueError("Domain must not include port number.")
+        if domain.query:
+            raise ValueError(f"Domain must not include query parameters! domain:{domain}")
         if not domain.hostname:
             raise ValueError(f"Domain must have hostname! domain:{domain}")
 
         # 1. Base Config
         config: ConfigIngress = {
             "hostname": domain.hostname,  # type: ignore
-            "service": self.get_clean_service_url(),
+            "service": self.service_url,
         }
+
         if domain.path and domain.path != "/":
             config["path"] = domain.path
 
-        # 2. Origin Request Logic (The Tri-State)
-        origin_request: ConfigIngressOriginRequest = {}
-        # Only apply TLS settings for HTTPS or Encrypted Sockets
-        if self.scheme in ["https", "unix+tls"]:
-
-            # A. Explicit Domain Override (?verify=api.com)
-            if self.verify_tls and self.verify_tls.lower() not in ["true", "false"]:
-                origin_request["origin_server_name"] = self.verify_tls
-                origin_request["http_host_header"] = self.verify_tls
-
-            # B. Explicit Disable (?verify=false)
-            elif self.verify_tls and self.verify_tls.lower() == "false":
-                origin_request["no_tls_verify"] = True
-
-            # C. Explicit Enable (?verify=true) -> Do nothing (Default)
-            elif self.verify_tls and self.verify_tls.lower() == "true":
-                pass
-
-            # D. Smart Default (Locals) -> Disable Verify
-            # Note: We check hostname for standard URLs, or scheme for unix+tls
-            is_local = self.hostname in ["localhost", "127.0.0.1", "::1"]
-            if is_local or self.scheme == "unix+tls":
-                origin_request["no_tls_verify"] = True
-
         # 3. Attach if not empty
-        if origin_request:
-            config["origin_request"] = origin_request
+        if self.origin_config:
+            config["origin_request"] = self.origin_config
 
         return config
 
 
 class Mapping(NamedTuple):
+    """Represents a mapping between a domain and a service."""
+
     domain: ParseResult
     service: Service
 
     @classmethod
     def from_pair(cls, domain: str, service: str) -> Mapping:
+        """Create a Mapping from domain and service strings.
+
+        Args:
+            domain: Domain string
+            service: Service string
+
+        Returns:
+            Mapping instance
+        """
         parsed_domain = urlparse(domain)
         if not parsed_domain.scheme:
-            parsed_domain = urlparse(f"http://{domain}")
+            # The same file hack, scheme for domain will be thrown away anyway
+            parsed_domain = urlparse(f"file://{domain}")
 
-        service_x = Service.autocomplete_from_str(service)
+        service_x = Service.from_str(service)
         return cls(parsed_domain, service_x)
 
     @classmethod
     def from_str(cls, pair: str) -> Mapping:
+        """Create a Mapping from a domain=service string.
+
+        Args:
+            pair: String in format "domain.com=target_url"
+
+        Returns:
+            Mapping instance
+
+        Raises:
+            ValueError: If the string doesn't contain exactly one '=' separator
+
+        Example:
+            >>> Mapping.from_str("app.com=localhost:8000")
+            Mapping(domain='app.com', service='localhost:8000')
         """
-        Splits 'domain=target' string safely.
-        Example: "app.com=localhost:8000" -> ("app.com", "localhost:8000")
-        """
-        try:
-            domain_str, service_str = pair.split("=", 1)
-            return cls.from_pair(domain_str, service_str)
-        except ValueError:
+        if "=" not in pair:
             raise ValueError(f"Invalid mapping '{pair}'. Expected format 'domain.com=target_url'")
+
+        domain_str, service_str = pair.split("=", 1)
+        return cls.from_pair(domain_str, service_str)
+
+    def ingress(self) -> ConfigIngress:
+        """Generate Cloudflare Ingress config for this mapping.
+
+        Returns:
+            ConfigIngress dictionary
+        """
+        return self.service.ingress(self.domain)

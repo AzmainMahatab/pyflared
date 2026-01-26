@@ -81,7 +81,7 @@ def binary_path() -> pathlib.Path:
 token_tunnel_cmd = "tunnel", "run", "--token"
 quick_tunnel_cmd = "tunnel", "--no-autoupdate", "--url"
 
-cloudflared = BinaryApp(binary_path())
+cloudflared = BinaryApp(binary_path)
 
 
 @cloudflared.instant()

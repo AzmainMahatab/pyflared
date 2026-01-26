@@ -116,7 +116,7 @@ def pretty_tunnel_status(line: bytes, _: OutputChannel):
 def mapped_tunnel(
         pair_args: list[str] = typer.Argument(
             metavar="DOMAIN=SERVICE",  # Changes display in usage synopsis
-            help="List of mappings in the format 'domain=service'.",
+            help="List of mappings in the format 'domain=service?verify=<true|false|domain.com>'",
         ),
         keep_orphans: bool = typer.Option(
             False,

@@ -1,31 +1,21 @@
 import re
-from ipaddress import ip_address
 from pathlib import Path
 from typing import Annotated
-import validators
 
 import typer
-from pydantic import BaseModel, Field, computed_field, model_validator, HttpUrl, BeforeValidator, AfterValidator
+import validators
+from pydantic import BaseModel, Field, computed_field, model_validator, AfterValidator
 
 
-def validate_domain_or_ip(v: str) -> str:
-    # 1. Check if it's a valid IP Address (IPv4 or IPv6)
-    # We use the standard library 'ipaddress' because it is faster and built-in.
-    try:
-        ip_address(v)
-        return v  # It is a valid IP, we are done.
-    except ValueError:
-        pass  # Not an IP, fall through to domain check.
-
-    # 2. Check if it's a valid Public Domain
+def validate_domain(v: str) -> str:
+    # Check if it's a valid Public Domain, Cloudflare client side NEEDS Public Domains, no IPs
     # validators.domain() strictly enforces TLDs (dots), so "23w" or "localhost" will fail.
-    if validators.domain(v) is True:
+    if validators.domain(v):
         return v
+    raise ValueError(f"Invalid Public Domain:'{v}',Cloudflare clientside NEEDS Public Domains")
 
-    raise ValueError(f"Invalid Public Domain or IP Address: '{v}'")
 
-
-HostName = Annotated[str, AfterValidator(validate_domain_or_ip)]
+HostName = Annotated[str, AfterValidator(validate_domain)]
 
 
 class SSHConfig(BaseModel):

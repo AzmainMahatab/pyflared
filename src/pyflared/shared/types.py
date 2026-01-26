@@ -77,7 +77,7 @@ class ProcessOutput(NamedTuple):
 type CmdArg = str | bytes | os.PathLike[str] | os.PathLike[bytes]
 type CmdArgs = AwaitableMaybe[Iterable[CmdArg] | CmdArg]
 type CmdTargetable[**P] = Callable[P, CmdArgs]
-# type CmdTargetable[**P] = Callable[P, CmdArgs]
+type BinaryCallable = Callable[[], CmdArg]
 
 type Guard = Callable[[], AwaitableMaybe[bool]]
 type Chunk = AwaitableMaybe[bytes | ChunkSignal]

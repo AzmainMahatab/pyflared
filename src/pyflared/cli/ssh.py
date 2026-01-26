@@ -20,6 +20,50 @@ from pyflared.utils.pydantic_parse import pydantic_typer_parse
 
 ssh_subcommand = typer.Typer(help="Cloudflared ssh")
 
+
+# Server side
+@ssh_subcommand.command()
+def serve(
+        hostname: str = typer.Argument(
+            metavar="DOMAIN",  # Changes display in usage synopsis
+            help="Domain where you want to serve SSH",
+        ),
+        tunnel_name: str | None = typer.Option(
+            None, "--tunnel-name", "-n",
+            help="Tunnel name",
+            show_default="hostname_YYYY-MM-DD_UTC..."
+        ),
+        keep_orphans: bool = typer.Option(
+            False,
+            "--keep-orphans",
+            "-k",
+            help="Preserve orphan tunnels (prevents default removal)."
+        ),
+        api_token: SecretStr | None = typer.Option(
+            None,
+            envvar="CLOUDFLARE_API_TOKEN",
+            parser=SecretStr,
+            help="Cloudflare API Token to manage tunnels and dns",  # TODO: specify token needed permission
+        ),
+        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs"),
+):
+    sshd_status = check_sshd_status()
+    match sshd_status:
+        case SshdStatus.BINARY_MISSING:
+            logger.warning("❌ SSH Server is NOT INSTALLED.")  # TODO: provide link to installation guide
+        case SshdStatus.NOT_RUNNING:
+            logger.warning("⚠️  SSH Server is INSTALLED but NOT RUNNING.")  # TODO: provide link to start guide
+
+    with isolated_logging(logging.DEBUG if verbose else logging.INFO):
+        pairs = Mapping.from_pair(hostname, "ssh://localhost:22")
+
+        tunnel = pyflared.run_dns_fixed_tunnel(
+            [pairs], api_token=api_token.get_secret_value(), remove_orphan=not keep_orphans,
+            tunnel_name=tunnel_name)  # TODO: pass remove_orphan
+        asyncio.run(tunnel.start_background([pretty_tunnel_status]))
+
+
+# Client side
 SSH_DIR: Final[Path] = Path.home() / ".ssh"
 CONFIG_FILE: Final[Path] = SSH_DIR / "config"
 INCLUDE_DIRECTIVE: Final[str] = "Include pyflared/*.conf"
@@ -254,46 +298,3 @@ def proxy(hostname: str) -> NoReturn:
     except OSError as e:
         typer.echo(f"Execution failed: {e}", err=True)
         sys.exit(e.errno)
-
-
-@ssh_subcommand.command()
-def serve(
-        hostname: str = typer.Argument(
-            ...,
-            metavar="example.co,",  # Changes display in usage synopsis
-            help="Domain where you want to serve SSH",
-            show_default=False
-        ),
-        tunnel_name: str | None = typer.Option(
-            None, "--tunnel-name", "-n",
-            help="Tunnel name",
-            show_default="hostname_YYYY-MM-DD_UTC..."
-        ),
-        keep_orphans: bool = typer.Option(
-            False,
-            "--keep-orphans",
-            "-k",
-            help="Preserve orphan tunnels (prevents default removal)."
-        ),
-        api_token: SecretStr | None = typer.Option(
-            None,
-            envvar="CLOUDFLARE_API_TOKEN",
-            parser=SecretStr,
-            help="Cloudflare API Token to manage tunnels and dns",  # TODO: specify token needed permission
-        ),
-        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs"),
-):
-    sshd_status = check_sshd_status()
-    match sshd_status:
-        case SshdStatus.BINARY_MISSING:
-            logger.warning("❌ SSH Server is NOT INSTALLED.")  # TODO: provide link to installation guide
-        case SshdStatus.NOT_RUNNING:
-            logger.warning("⚠️  SSH Server is INSTALLED but NOT RUNNING.")  # TODO: provide link to start guide
-
-    with isolated_logging(logging.DEBUG if verbose else logging.INFO):
-        pairs = Mapping.from_pair(hostname, "ssh://localhost:22")
-
-        tunnel = pyflared.run_dns_fixed_tunnel(
-            [pairs], api_token=api_token.get_secret_value(), remove_orphan=not keep_orphans,
-            tunnel_name=tunnel_name)  # TODO: pass remove_orphan
-        asyncio.run(tunnel.start_background([pretty_tunnel_status]))

@@ -3,7 +3,7 @@ from functools import wraps
 from typing import overload
 
 from pyflared.binary.process import FinalCmdFun, ProcessContext
-from pyflared.shared.types import CmdArg, CmdTargetable, Guard, OutputChannel, Responder, StreamChunker
+from pyflared.shared.types import CmdTargetable, Guard, OutputChannel, Responder, StreamChunker, BinaryCallable
 
 
 def responder_proxy(func: Responder) -> Responder:
@@ -14,7 +14,10 @@ def responder_proxy(func: Responder) -> Responder:
 # type AnyFunThatReturnsArgs = Callable[..., CmdArgs]
 
 class BinaryApp:
-    def __init__(self, binary_path: CmdArg):
+
+    # def __init__(self, binary_path: CmdArg):
+    #     self.binary_path = binary_path
+    def __init__(self, binary_path: BinaryCallable):
         self.binary_path = binary_path
 
     def daemon[**P](

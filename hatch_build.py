@@ -122,18 +122,18 @@ class CloudflaredBinary:
 
     @property
     def asset_name(self) -> str:
-        """Filename of the release asset to download."""
+        """Release asset filename to download."""
         return f"{BINARY_NAME}-{SYSTEM}-{self._arch}{self._asset_ext}"
 
     @property
     def final_binary_name(self) -> str:
-        """Filename of the binary after extraction (if needed)."""
+        """Binary filename after extraction."""
         ext = ".exe" if SYSTEM == "windows" else ""
         return f"{BINARY_NAME}{ext}"
 
     @property
     def download_url(self) -> str:
-        """Full URL to download the asset."""
+        """Full download URL for the asset."""
         return f"{GITHUB_RELEASES_URL}/{self.version}/{self.asset_name}"
 
 
@@ -170,7 +170,7 @@ class BuildHook(BuildHookInterface):
         return dir_archive(self.cache_dir, cached=False)
 
     def _ensure_dirs(self) -> None:
-        """Create all required build directories."""
+        """Create required build directories."""
         for directory in (self.build_dir, self.download_dir, self.binary_dir):
             directory.mkdir(parents=True, exist_ok=True)
 
@@ -180,7 +180,7 @@ class BuildHook(BuildHookInterface):
 
     @cached_property
     def _version_from_file(self) -> str:
-        """Read pinned version from cloudflared.version file, or 'latest'."""
+        """Pinned version from cloudflared.version file, or 'latest'."""
         version_file = Path(self.root) / "cloudflared.version"
         if version_file.is_file():
             if content := version_file.read_text("utf-8").strip():
@@ -188,18 +188,17 @@ class BuildHook(BuildHookInterface):
         return "latest"
 
     def _resolve_version(self, client: httpx.Client) -> str:
-        """Resolve the actual version to download."""
+        """Resolve actual version to download."""
         if self._version_from_file == "latest":
             return self._fetch_latest_version(client)
         return self._version_from_file
 
     @staticmethod
     def _fetch_latest_version(client: httpx.Client) -> str:
-        """Fetch the latest release version from GitHub API."""
+        """Fetch latest release version from GitHub API."""
         response = client.get(GITHUB_API_LATEST)
         response.raise_for_status()
         return response.json()["tag_name"]
-
     # -------------------------------------------------------------------------
     # Download & Extract
     # -------------------------------------------------------------------------
@@ -234,7 +233,7 @@ class BuildHook(BuildHookInterface):
         return binary
 
     def _extract_binary(self, binary: CloudflaredBinary) -> None:
-        """Extract or copy the binary to the binary directory."""
+        """Extract or copy binary to binary directory."""
         downloaded_file = self.download_dir / binary.asset_name
 
         if binary.is_tarball:
@@ -246,7 +245,7 @@ class BuildHook(BuildHookInterface):
             shutil.copy(downloaded_file, final_path)
 
     def _include_binary(self, build_data: dict[str, Any], binary: CloudflaredBinary) -> None:
-        """Add the binary to the wheel's force_include."""
+        """Add binary to wheel's force_include."""
         final_path = self.binary_dir / binary.final_binary_name
         wheel_path = f"{self.metadata.name}/bin/{binary.final_binary_name}"
         build_data["force_include"][final_path] = wheel_path

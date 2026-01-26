@@ -11,14 +11,13 @@ from loguru import logger
 from pyflared.shared.types import (
     AwaitableMaybe,
     ChunkSignal,
-    CmdArg,
     CmdArgs,
     CommandError,
     Guard,
     OutputChannel,
     ProcessOutput,
     Responder,
-    StreamChunker,
+    StreamChunker, BinaryCallable,
 )
 from pyflared.utils.async_helper import safe_awaiter
 
@@ -173,7 +172,7 @@ class ProcessContext(contextlib.AbstractAsyncContextManager[ProcessInstance]):
     """
     Manages the lifecycle of a subprocess and its associated IO streams.
     """
-    binary_path: CmdArg
+    binary_path: BinaryCallable
     cmd_args: CmdArgs
 
     # Configuration
@@ -212,7 +211,7 @@ class ProcessContext(contextlib.AbstractAsyncContextManager[ProcessInstance]):
         # 3. Start Process
         logger.debug(f"Spawning {self.binary_path} with args: {args}")
         process = await asyncio.create_subprocess_exec(
-            self.binary_path, *args,
+            self.binary_path(), *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE

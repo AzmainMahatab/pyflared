@@ -74,10 +74,18 @@ extra-dependencies = [
 check = "mypy --install-types --non-interactive {args:src/pyflared tests}"
 
 [tool.hatch.envs.hatch-test]
-dev-mode = false
 extra-dependencies = [
     "pytest",
     "pytest-asyncio",
+]
+extra-args = ["--ignore=tests/binary"]
+
+[tool.hatch.envs.prod]
+template = "hatch-test"
+dev-mode = false
+scripts.test = [
+    "uv pip install .",
+    "pytest{env:HATCH_TEST_ARGS:} {args}"
 ]
 
 [tool.pytest.ini_options]
