@@ -54,12 +54,17 @@ def serve(
         case SshdStatus.NOT_RUNNING:
             logger.warning("⚠️  SSH Server is INSTALLED but NOT RUNNING.")  # TODO: provide link to start guide
 
+
+
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
         pairs = Mapping.from_pair(hostname, "ssh://localhost:22")
+        if not api_token:
+            # Securely prompt the user (hide input)
+            api_token = SecretStr(typer.prompt("Please enter CLOUDFLARE_API_TOKEN", hide_input=True))
 
         tunnel = pyflared.run_dns_fixed_tunnel(
             [pairs], api_token=api_token.get_secret_value(), remove_orphan=not keep_orphans,
-            tunnel_name=tunnel_name)  # TODO: pass remove_orphan
+            tunnel_name=tunnel_name)
         asyncio.run(tunnel.start_background([pretty_tunnel_status]))
 
 

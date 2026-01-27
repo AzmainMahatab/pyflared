@@ -145,14 +145,15 @@ def mapped_tunnel(
           $ pyflared tunnel mapped example.com=localhost:8000 example2.com=http://localhost:1234 example3.com=https://localhost:1234 example4.com=1234
     """
 
-    if not api_token:
-        # Securely prompt the user (hide input)
-        api_token = SecretStr(typer.prompt("Please enter your CF API token", hide_input=True))
 
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
         # pair_dict = Mappings(parse_pair(p) for p in pair_args)
         pairs = [Mapping.from_str(p) for p in pair_args]
+        if not api_token:
+            # Securely prompt the user (hide input)
+            api_token = SecretStr(typer.prompt("Please enter CLOUDFLARE_API_TOKEN", hide_input=True))
+
         tunnel = pyflared.run_dns_fixed_tunnel(
-            pairs, api_token=api_token.get_secret_value(), remove_orphan=not keep_orphans,
-            tunnel_name=tunnel_name)  # TODO: pass remove_orphan
+                pairs, api_token=api_token.get_secret_value(), remove_orphan=not keep_orphans,
+                tunnel_name=tunnel_name)
         asyncio.run(tunnel.start_background([pretty_tunnel_status]))
