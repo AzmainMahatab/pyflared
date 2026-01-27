@@ -17,7 +17,7 @@ ENV USE_PREBUILT_WHEEL=$USE_PREBUILT_WHEEL
 COPY . .
 
 # python build script instead of Bash logic
-RUN uv run scripts/build.py
+RUN uv run scripts/ensure_built.py
 
 # ============================================================================
 # Final Stage - Using Alpine for smaller image size
