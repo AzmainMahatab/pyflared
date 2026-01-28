@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -53,8 +54,6 @@ def serve(
             logger.warning("❌ SSH Server is NOT INSTALLED.")  # TODO: provide link to installation guide
         case SshdStatus.NOT_RUNNING:
             logger.warning("⚠️  SSH Server is INSTALLED but NOT RUNNING.")  # TODO: provide link to start guide
-
-
 
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
         pairs = Mapping.from_pair(hostname, "ssh://localhost:22")
@@ -226,6 +225,9 @@ def _upsert_config(ssh_config: SSHConfig) -> None:
 @ssh_subcommand.command()
 @pydantic_typer_parse
 def add(ssh_config: SSHConfig):
+    """
+    Adds ssh pyflared directive to the ssh config file. Use --help to learn more
+    """
     _upsert_config(ssh_config)
 
 
@@ -243,7 +245,7 @@ def remove(alias: str):
 
 @ssh_subcommand.command()
 # We accept a tuple of args to handle "user@host -v -p 22" naturally
-def connect(ssh_args: list[str]) -> NoReturn:
+def connect(ssh_args: list[str]):
     """
     Handles ssh args naturally in pyflared
     Example usage: pyflared ssh connect user@ssh.yoursite.com
@@ -277,7 +279,7 @@ def connect(ssh_args: list[str]) -> NoReturn:
 
 
 @ssh_subcommand.command()
-def proxy(hostname: str) -> NoReturn:
+def proxy(hostname: str):
     """
     Example usage: ssh -o ProxyCommand="pyflared ssh proxy %h" user@ssh.yoursite.com
 
