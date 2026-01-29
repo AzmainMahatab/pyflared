@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Final
 from loguru import logger
 from platformdirs import user_log_dir
 
+from pyflared.log.intercept import InterceptHandler
 from pyflared.shared.contants import APP_NAME, AUTHOR
 
 if TYPE_CHECKING:
@@ -45,7 +46,7 @@ def isolated_logging(level: int = logging.DEBUG):
 logger.remove()
 
 # SINK 1: Console
-logger.add(
+_ = logger.add(
     sys.stderr,
     format="<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>",
     level=logging.NOTSET,
@@ -58,10 +59,30 @@ log_dir.mkdir(parents=True, exist_ok=True)
 log_file = log_dir / "tunnel.log"
 
 # SINK 2: File
-logger.add(
+_ = logger.add(
     log_file,
     format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}",
     level=logging.DEBUG,
     rotation="10 MB",
     compression="zip"
 )
+
+# --- Bridge Standard Logging to Loguru ---
+
+# 1. Hijack the Root Logger.
+# level=0 (NOTSET) ensures we don't drop any logs before Loguru sees them.
+# force=True removes any existing standard logging handlers.
+logging.basicConfig(
+    handlers=[InterceptHandler()], level=0, force=True)  # This hijacks everything from logging to loguru
+
+# 2. Ensure SQLAlchemy specifically emits its queries at INFO
+# so our InterceptHandler can catch and downgrade them to DEBUG.
+# (If we don't do this, SQLAlchemy inherits WARNING from the root and drops the queries)
+logging.getLogger("sqlalchemy.engine.Engine").setLevel(logging.INFO)
+noisy_libraries = [
+    "httpx",
+    "httpcore",
+    "urllib3",
+]
+for lib in noisy_libraries:
+    logging.getLogger(lib).setLevel(logging.WARNING)

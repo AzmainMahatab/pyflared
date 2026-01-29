@@ -4,7 +4,6 @@ import warnings
 
 from loguru import logger
 
-from pyflared.consts import IS_WINDOWS
 
 # Supress Pydantic V1 deprecation warning in cloudflare
 warnings.filterwarnings(
@@ -25,7 +24,7 @@ logger.add(
 
 # Apply monkey patch till my PR is accepted.
 import pyflared.api_sdk.monkey_patch  # noqa: F401
-from pyflared._commands import binary_path, binary_version, run_dns_fixed_tunnel, run_quick_tunnel, run_token_tunnel
+from pyflared.core._commands import binary_path, binary_version, run_dns_fixed_tunnel, run_quick_tunnel, run_token_tunnel, cleanup
 
 __all__ = [
     "binary_path",
@@ -33,4 +32,5 @@ __all__ = [
     "run_dns_fixed_tunnel",
     "run_quick_tunnel",
     "run_token_tunnel",
+    "cleanup"
 ]

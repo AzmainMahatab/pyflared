@@ -123,7 +123,7 @@ def _format_validation_errors(error: ValidationError) -> str:
     return "[Error] Validation failed:\n" + "\n".join(error_msgs)
 
 
-def pydantic_typer_parse[P, R](func: Callable[P, R]) -> Callable[..., R]:
+def pydantic_typer_parse[**P, R](func: Callable[P, R]) -> Callable[..., R]:
     """
     Decorator to explode a Pydantic model into Typer CLI arguments.
 

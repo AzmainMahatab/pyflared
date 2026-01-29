@@ -219,7 +219,7 @@ class BuildHook(BuildHookInterface):
         response = client.get(binary.download_url, headers=headers)
 
         if response.status_code == httpx.codes.NOT_MODIFIED:
-            console.print(f"[green]✓[/] Reusing cached {binary.asset_name}")
+            console.print(f"Reusing cached {binary.asset_name}")
         else:
             response.raise_for_status()
             download_path = self.download_dir / binary.asset_name

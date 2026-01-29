@@ -10,8 +10,6 @@ from cloudflare.types.zero_trust.tunnels.cloudflared.configuration_update_params
     ConfigIngressOriginRequest,
 )
 
-type Domain = ParseResult
-
 # Cloudflare supported schemes
 CLOUDFLARE_SUPPORTED_SCHEMES: Final[frozenset[str]] = frozenset({
     "http", "https", "unix", "tcp", "ssh", "rdp", "unix+tls", "smb", "ws", "wss"
@@ -94,6 +92,20 @@ def _extract_port_from_path(path: str) -> int | None:
     if _looks_like_port(first_segment):
         return int(first_segment)
     return None
+
+
+# type Subdomain = ParseResult
+
+class Subdomain(ParseResult):
+
+    def __new__(cls, parsed: ParseResult):
+        return super().__new__(cls, *parsed)
+
+    @property
+    def str_rep(self) -> str:
+        if self.hostname:
+            return self.hostname
+        raise ValueError(f"Invalid subdomain, {self}")
 
 
 class Service(ParseResult):
@@ -209,11 +221,11 @@ class Service(ParseResult):
 
         return origin_request
 
-    def ingress(self, domain: Domain) -> ConfigIngress:
+    def ingress(self, subdomain: Subdomain) -> ConfigIngress:
         """Generate the full Cloudflare Ingress configuration.
 
         Args:
-            domain: Parsed domain information
+            subdomain: Parsed domain information
 
         Returns:
             ConfigIngress dictionary
@@ -222,21 +234,21 @@ class Service(ParseResult):
             ValueError: If domain includes a port or lacks a hostname
         """
         # We dont care about domain scheme
-        if domain.port:
+        if subdomain.port:
             raise ValueError("Domain must not include port number.")
-        if domain.query:
-            raise ValueError(f"Domain must not include query parameters! domain:{domain}")
-        if not domain.hostname:
-            raise ValueError(f"Domain must have hostname! domain:{domain}")
+        if subdomain.query:
+            raise ValueError(f"Domain must not include query parameters! domain:{subdomain}")
+        if not subdomain.hostname:
+            raise ValueError(f"Domain must have hostname! domain:{subdomain}")
 
         # 1. Base Config
         config: ConfigIngress = {
-            "hostname": domain.hostname,  # type: ignore
+            "hostname": subdomain.hostname,  # type: ignore
             "service": self.service_url,
         }
 
-        if domain.path and domain.path != "/":
-            config["path"] = domain.path
+        if subdomain.path and subdomain.path != "/":
+            config["path"] = subdomain.path
 
         # 3. Attach if not empty
         if self.origin_config:
@@ -248,27 +260,29 @@ class Service(ParseResult):
 class Mapping(NamedTuple):
     """Represents a mapping between a domain and a service."""
 
-    domain: ParseResult
+    subdomain: Subdomain
     service: Service
 
     @classmethod
-    def from_pair(cls, domain: str, service: str) -> Mapping:
+    def from_pair(cls, subdomain: str, service: str) -> Mapping:
         """Create a Mapping from domain and service strings.
 
         Args:
-            domain: Domain string
+            subdomain: Domain string
             service: Service string
 
         Returns:
             Mapping instance
         """
-        parsed_domain = urlparse(domain)
-        if not parsed_domain.scheme:
+        parsed_subdomain = urlparse(subdomain)
+        if not parsed_subdomain.scheme:
             # The same file hack, scheme for domain will be thrown away anyway
-            parsed_domain = urlparse(f"file://{domain}")
+            parsed_subdomain = urlparse(f"file://{subdomain}")
 
+        subdomain_x = Subdomain(parsed_subdomain)
         service_x = Service.from_str(service)
-        return cls(parsed_domain, service_x)
+
+        return cls(subdomain_x, service_x)
 
     @classmethod
     def from_str(cls, pair: str) -> Mapping:
@@ -299,4 +313,5 @@ class Mapping(NamedTuple):
         Returns:
             ConfigIngress dictionary
         """
-        return self.service.ingress(self.domain)
+
+        return self.service.ingress(self.subdomain)

@@ -2,18 +2,19 @@ import asyncio
 import logging
 import sys
 
-import pyflared
 import typer
-from pydantic import SecretStr
-from pyflared import _patterns
-from pyflared.api_sdk.parse import Mapping
-from pyflared.api_sdk.tunnel_manager import TunnelManager
-from pyflared.cli.common import err_console
-from pyflared.log.config import isolated_logging
-from pyflared.shared.types import OutputChannel
 from rich.panel import Panel
+from typing_extensions import Annotated
 
-tunnel_subcommand = typer.Typer(help="Use for creating quick tunnels and dns mapped tunnel")
+import pyflared
+from pyflared import cleanup
+from pyflared.shared import _patterns
+from pyflared.api_sdk.parse import Mapping
+from pyflared.log.config import isolated_logging
+from pyflared.shared.console import err_console
+from pyflared.shared.types import OutputChannel
+
+tunnel_manager = typer.Typer(help="Use for creating quick tunnels and dns mapped tunnel")
 
 
 def display_tunnel_info(url: str) -> None:
@@ -22,8 +23,10 @@ def display_tunnel_info(url: str) -> None:
     """
     # [link=...] makes it clickable in supported terminals
     # [bold green] styles the text
-    content = f"[bold green]Tunnel Created Successfully![/bold green]\n\n" \
-              f"Your URL is: [link={url}]{url}[/link]"
+    content = (
+            f"[bold green]Tunnel Created Successfully![/bold green]\n\n"
+            + f"Your URL is: [link={url}]{url}[/link]"
+    )
 
     panel = Panel(
         content,
@@ -59,10 +62,10 @@ def print_tunnel_box(line: bytes, _: OutputChannel):
     output_result(line.decode().strip())
 
 
-@tunnel_subcommand.command("quick")
+@tunnel_manager.command("quick")
 def quick_tunnel(
         service: str,
-        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
+        verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show full cloudflared logs")] = False
 ):
     """
         Cloudflared QuickTunnels without domains.
@@ -71,37 +74,35 @@ def quick_tunnel(
     """
     tunnel_process = pyflared.run_quick_tunnel(service)  # TODO: Fix it! we cannot run in bg and end
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
-        asyncio.run(tunnel_process.start_background([print_tunnel_box]))
+        _ = asyncio.run(tunnel_process.start_background([print_tunnel_box]))
 
 
-async def remove_orphans(
-        api_token: SecretStr
-):
-    tunnel_manager = TunnelManager(api_token.get_secret_value())
-    await tunnel_manager.remove_orphans()
-    await tunnel_manager.client.close()
+@tunnel_manager.command("cleanup")
+def cleanup_tunnels_n_dns(
+        all_resources: Annotated[bool, typer.Option("--all", "-a", help="Delete ALL tunnels and DNS records, not just orphans")] = False,
+        force: Annotated[bool, typer.Option("--force", "-f", help="Bypass confirmation prompt when deleting all resources")] = False,
+        verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show full cloudflared logs")] = False,
+) -> None:
+    """
+    Clean up tunnels and DNS records. By default, only removes orphans (unnamed tunnels and subdomains if inactive)
+    """
+    # Protect the destructive --all action with a confirmation prompt
+    if all_resources and not force:
+        _ = typer.confirm(
+            "WARNING: You are about to delete ALL tunnels and DNS records, including active and named ones. Are you sure?",
+            abort=True
+        )
 
-
-@tunnel_subcommand.command("cleanup")
-def cleanup_orphans(
-        api_token: SecretStr | None = typer.Option(
-            None,
-            envvar="CLOUDFLARE_API_TOKEN",
-            parser=SecretStr,
-            help="CF API Token to manage tunnels and dns",  # TODO: specify token needed permission
-        ),
-        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
-):
+    # Set the logging context and execute the async cleanup,
+    # passing the boolean so the backend knows the intended scope.
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
-        if not api_token:
-            # Securely prompt the user (hide input)
-            api_token = SecretStr(typer.prompt("Please enter your CF API token", hide_input=True))
-        asyncio.run(remove_orphans(api_token))
+        asyncio.run(cleanup(all_resources))
 
 
 def pretty_tunnel_status(line: bytes, _: OutputChannel):
     if _patterns.starting_tunnel in line:
         err_console.print("Starting Tunnel...")
+    # line.startswith(b"ERR")
     elif b"ERR" in line:
         err_console.print(f"[bold red]{line.decode()}[/bold red]")
     # TODO: Add other Index check
@@ -112,30 +113,20 @@ def pretty_tunnel_status(line: bytes, _: OutputChannel):
             "[green]Tunnel status is healthy, with all 4 connections[/green]")  # TODO: Add locations and protocols
 
 
-@tunnel_subcommand.command("mapped")
+@tunnel_manager.command("mapped")
 def mapped_tunnel(
-        pair_args: list[str] = typer.Argument(
+        pair_args: Annotated[list[str], typer.Argument(
             metavar="DOMAIN=SERVICE",  # Changes display in usage synopsis
             help="List of mappings in the format 'domain=service?verify=<true|false|domain.com>'",
-        ),
-        keep_orphans: bool = typer.Option(
-            False,
-            "--keep-orphans",
-            "-k",
-            help="Preserve orphan tunnels (prevents default removal)."
-        ),
-        tunnel_name: str | None = typer.Option(
-            None, "--tunnel-name", "-n",
+        )],
+        tunnel_name: Annotated[str | None, typer.Option(
+            "--tunnel-name", "-n",
             help="Tunnel name",
             show_default="hostname_YYYY-MM-DD_UTC..."
-        ),
-        api_token: SecretStr | None = typer.Option(
-            None,
-            envvar="CLOUDFLARE_API_TOKEN",
-            parser=SecretStr,
-            help="Cloudflare API Token to manage tunnels and dns",  # TODO: specify token needed permission
-        ),
-        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs")
+        )] = None,
+        force: Annotated[
+            bool, typer.Option("--force", "-f", help="Take over dns from other tunnels even if named")] = False,
+        verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show full cloudflared logs")] = False,
 ):
     """
         Establish mapped tunnels for one or multiple services.
@@ -145,15 +136,17 @@ def mapped_tunnel(
           $ pyflared tunnel mapped example.com=localhost:8000 example2.com=http://localhost:1234 example3.com=https://localhost:1234 example4.com=1234
     """
 
-
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
         # pair_dict = Mappings(parse_pair(p) for p in pair_args)
         pairs = [Mapping.from_str(p) for p in pair_args]
-        if not api_token:
-            # Securely prompt the user (hide input)
-            api_token = SecretStr(typer.prompt("Please enter CLOUDFLARE_API_TOKEN", hide_input=True))
+        # if not api_token:
+        #     # Securely prompt the user (hide input)
+        #     api_token = SecretStr(typer.prompt("Please enter CLOUDFLARE_API_TOKEN", hide_input=True))
 
-        tunnel = pyflared.run_dns_fixed_tunnel(
-                pairs, api_token=api_token.get_secret_value(), remove_orphan=not keep_orphans,
-                tunnel_name=tunnel_name)
-        asyncio.run(tunnel.start_background([pretty_tunnel_status]))
+        tunnel_process = pyflared.run_dns_fixed_tunnel(
+            pairs,
+            tunnel_name=tunnel_name,
+            force=force,
+        )
+
+        _ = asyncio.run(tunnel_process.start_background([pretty_tunnel_status]))

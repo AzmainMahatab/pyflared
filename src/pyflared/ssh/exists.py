@@ -4,10 +4,10 @@ import socket
 from enum import StrEnum, auto
 from pathlib import Path
 
-from pyflared import IS_WINDOWS
+from pyflared.shared.consts import IS_WINDOWS
 
 
-def is_sshd_running(host="localhost", port=22, timeout=1.0) -> bool:
+def is_sshd_running(host: str = "localhost", port: int = 22, timeout: float = 1.0) -> bool:
     """
     Checks if the SSH server is actively listening on the given port.
     """

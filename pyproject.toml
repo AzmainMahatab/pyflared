@@ -36,7 +36,14 @@ dependencies = [
     "beartype",
     "pydantic",
     "pydantic_settings",
-    "validators>=0.35.0",
+    "validators",
+    "sqlmodel",
+    "aiosqlite",
+    "tldextract",
+    "coolname",
+    "typechecked",
+    "typeguard",
+    "asyncstdlib"
 ]
 
 [project.urls]
@@ -53,9 +60,6 @@ path = "src/pyflared/__about__.py"
 [project.scripts]
 pyflared = "pyflared.cli:app"
 
-#[tool.hatch.metadata.hooks.custom]
-#binary_version = "latest"
-#wrapper_version = 1
 [tool.hatch.build.hooks.custom]
 
 [tool.hatch.build.targets.sdist]
@@ -139,3 +143,8 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
+
+[tool.pyright]
+enableExperimentalFeatures = true
+
+#reportUnusedCallResult = false

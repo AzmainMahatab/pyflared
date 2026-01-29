@@ -6,6 +6,9 @@
   <p>
     <a href="https://pypi.org/project/pyflared"><img src="https://img.shields.io/pypi/v/pyflared.svg?style=flat-square" alt="PyPI - Version"></a>
     <a href="https://pypi.org/project/pyflared"><img src="https://img.shields.io/pypi/pyversions/pyflared.svg?style=flat-square" alt="PyPI - Python Version"></a>
+    <a href="https://pepy.tech/project/pyflared">
+        <img src="https://static.pepy.tech/badge/pyflared" alt="Pepy Downloads">
+    </a>    
     <a href="https://github.com/cloudflare/cloudflared/releases/latest">
         <img src="https://img.shields.io/badge/dynamic/yaml?url=https%3A%2F%2Fraw.githubusercontent.com%2FAzmainMahatab%2Fpyflared%2Fmain%2Fcloudflared.version&query=%24&label=cloudflared" alt="Cloudflared Version">
     </a>
@@ -17,9 +20,9 @@
 
 ---
 
-**Pyflared** wraps the official `cloudflared` binary and the Cloudflare API to provide a seamless CLI experience for
-creating and managing Cloudflare Tunnels. No more manual token juggling or complex configurations—just simple commands
-to expose your local services to the internet.
+**Pyflared** a simple CLI tool for creating and managing Cloudflare Tunnels. No more manual token juggling or complex
+configurations—just simple commands to expose your local services to the internet. You can even use it as a python
+package!
 
 ## ✨ Features
 
@@ -97,7 +100,7 @@ pyflared --help
 ### Commands
 
 | Command                             | Description                              |
-| ----------------------------------- | ---------------------------------------- |
+|-------------------------------------|------------------------------------------|
 | `pyflared version`                  | Show the bundled cloudflared version     |
 | `pyflared tunnel quick <service>`   | Create a quick tunnel to a local service |
 | `pyflared tunnel mapped <pairs...>` | Create DNS-mapped tunnel(s)              |
@@ -106,7 +109,7 @@ pyflared --help
 ### Options for `tunnel mapped`
 
 | Option               | Description                                                       |
-| -------------------- | ----------------------------------------------------------------- |
+|----------------------|-------------------------------------------------------------------|
 | `--keep-orphans, -k` | Preserve orphan tunnels (prevents default removal)                |
 | `--tunnel-name, -n`  | Specify a custom tunnel name (default: `hostname_YYYY-MM-DD_...`) |
 | `--verbose, -v`      | Show detailed cloudflared logs                                    |
@@ -116,7 +119,7 @@ pyflared --help
 ### Environment Variables
 
 | Variable               | Description                                     |
-| ---------------------- | ----------------------------------------------- |
+|------------------------|-------------------------------------------------|
 | `CLOUDFLARE_API_TOKEN` | Your Cloudflare API token for tunnel management |
 
 ### API Token Permissions
@@ -131,9 +134,11 @@ For DNS-mapped tunnels, your API token needs the following permissions:
 
 ### SSL Handshake Failed (Error 525)
 
-If you see an **Error 525** page ("SSL handshake failed") immediately after creating a tunnel, don't worry—this is a temporary issue. Cloudflare's edge network may take a few moments to fully propagate the tunnel configuration.
+If you see an **Error 525** page ("SSL handshake failed") immediately after creating a tunnel, don't worry—this is a
+temporary issue. Cloudflare's edge network may take a few moments to fully propagate the tunnel configuration.
 
-**What to do:** Simply wait 1-2 minutes and refresh the page. The error will resolve automatically once the tunnel is fully established.
+**What to do:** Simply wait 1-2 minutes and refresh the page. The error will resolve automatically once the tunnel is
+fully established.
 
 ## 🛠️ Development
 

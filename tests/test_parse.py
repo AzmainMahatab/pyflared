@@ -196,4 +196,4 @@ def test_mapping_from_str(input_str: str, expected: ConfigIngress) -> None:
 def test_invalid_mapping_raises() -> None:
     """Missing '=' separator should raise ValueError."""
     with pytest.raises(ValueError, match=r"Invalid mapping"):
-        Mapping.from_str("app.com-localhost:8000")
+        _ = Mapping.from_str("app.com-localhost:8000")

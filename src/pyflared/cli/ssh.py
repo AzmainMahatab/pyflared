@@ -1,52 +1,45 @@
 import asyncio
 import logging
 import os
-import shutil
+import shlex
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Final, NoReturn
+from typing import Final
+from typing_extensions import Annotated
 
-import pyflared
 import typer
 from loguru import logger
-from pydantic import SecretStr
-from pyflared import IS_WINDOWS, binary_path
-from pyflared._commands import Mapping
+
+import pyflared
+from pyflared import binary_path
+from pyflared.api_sdk.parse import Mapping
 from pyflared.cli.tunnel import pretty_tunnel_status
+from pyflared.shared.consts import IS_WINDOWS
 from pyflared.log.config import isolated_logging
 from pyflared.ssh.config import SSHConfig
 from pyflared.ssh.exists import check_sshd_status, SshdStatus
 from pyflared.utils.pydantic_parse import pydantic_typer_parse
 
-ssh_subcommand = typer.Typer(help="Cloudflared ssh")
+ssh_manager = typer.Typer(help="Cloudflared ssh")
 
 
 # Server side
-@ssh_subcommand.command()
+@ssh_manager.command()
 def serve(
-        hostname: str = typer.Argument(
+        hostname: Annotated[str, typer.Argument(
             metavar="DOMAIN",  # Changes display in usage synopsis
             help="Domain where you want to serve SSH",
-        ),
-        tunnel_name: str | None = typer.Option(
-            None, "--tunnel-name", "-n",
+        )],
+        tunnel_name: Annotated[str | None, typer.Option(
+            "--tunnel-name", "-n",
             help="Tunnel name",
             show_default="hostname_YYYY-MM-DD_UTC..."
-        ),
-        keep_orphans: bool = typer.Option(
-            False,
-            "--keep-orphans",
-            "-k",
-            help="Preserve orphan tunnels (prevents default removal)."
-        ),
-        api_token: SecretStr | None = typer.Option(
-            None,
-            envvar="CLOUDFLARE_API_TOKEN",
-            parser=SecretStr,
-            help="Cloudflare API Token to manage tunnels and dns",  # TODO: specify token needed permission
-        ),
-        verbose: bool = typer.Option(False, "--verbose", "-v", help="Show full cloudflared logs"),
+        )] = None,
+        force: Annotated[
+            bool, typer.Option("--force", "-f", help="Take over dns from other tunnels even if named")] = False,
+        verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show full cloudflared logs")] = False,
 ):
     sshd_status = check_sshd_status()
     match sshd_status:
@@ -57,14 +50,13 @@ def serve(
 
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
         pairs = Mapping.from_pair(hostname, "ssh://localhost:22")
-        if not api_token:
-            # Securely prompt the user (hide input)
-            api_token = SecretStr(typer.prompt("Please enter CLOUDFLARE_API_TOKEN", hide_input=True))
 
         tunnel = pyflared.run_dns_fixed_tunnel(
-            [pairs], api_token=api_token.get_secret_value(), remove_orphan=not keep_orphans,
-            tunnel_name=tunnel_name)
-        asyncio.run(tunnel.start_background([pretty_tunnel_status]))
+            [pairs],
+            tunnel_name=tunnel_name,
+            force=force,
+        )
+        _ = asyncio.run(tunnel.start_background([pretty_tunnel_status]))
 
 
 # Client side
@@ -222,7 +214,7 @@ def _upsert_config(ssh_config: SSHConfig) -> None:
         raise e
 
 
-@ssh_subcommand.command()
+@ssh_manager.command()
 @pydantic_typer_parse
 def add(ssh_config: SSHConfig):
     """
@@ -231,7 +223,7 @@ def add(ssh_config: SSHConfig):
     _upsert_config(ssh_config)
 
 
-@ssh_subcommand.command()
+@ssh_manager.command()
 def remove(alias: str):
     # Deleting is just removing a file
     config_file = SSH_DIR / "pyflared" / f"{alias}.conf"
@@ -243,42 +235,54 @@ def remove(alias: str):
         typer.echo(f"No config found for {alias}", err=True)
 
 
-@ssh_subcommand.command()
+def list2cmdline(args: Sequence[Path | str]):
+    """
+    Quotes a list of arguments for the specific OS shell.
+    Unix -> shlex.join (Single quotes)
+    Windows -> subprocess.list2cmdline (Double quotes)
+    """
+    if IS_WINDOWS:
+        # Windows requires double quotes and specific escaping logic
+        return subprocess.list2cmdline(args)
+    else:
+        # Unix requires shlex for safe POSIX quoting
+        return shlex.join(str(arg) for arg in args)
+
+
 # We accept a tuple of args to handle "user@host -v -p 22" naturally
-def connect(ssh_args: list[str]):
+@ssh_manager.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def connect(ctx: typer.Context):
     """
     Handles ssh args naturally in pyflared
     Example usage: pyflared ssh connect user@ssh.yoursite.com
 
-    Args:
-        ssh_args: The target hostname to connect to.
     """
-    cloudflared_bin = binary_path()
 
-    # 1. Quote the binary path to be safe against spaces
-    # We use single quotes for the inner path so the shell reads it as one unit.
-    proxy_cmd = f"'{cloudflared_bin}' access ssh --hostname %h"
-
-    # 2. Construct the Arguments
-    # We combine our forced config with whatever the user typed.
-    final_args = [
+    proxy_cmd = [binary_path(), "access", "ssh", "--hostname", "%h"]
+    proxy_injected_args = [
         "ssh",
-        "-o", f"ProxyCommand={proxy_cmd}",
-        *ssh_args  # Unpack the tuple: ("user@host", "-v") -> "user@host", "-v"
+        "-o", f'ProxyCommand={list2cmdline(proxy_cmd)}',
     ]
+    proxy_injected_args.extend(ctx.args)  # Unpack the tuple: ("user@host", "-v") -> "user@host", "-v"
 
-    sys.stdout.flush()
-    sys.stderr.flush()
+    if IS_WINDOWS:
+        try:
+            _ = subprocess.run(proxy_injected_args)
+        except OSError as e:
+            typer.echo(f"Execution failed: {e}", err=True)
+            sys.exit(e.errno)
+    else:
+        _ = sys.stdout.flush()
+        _ = sys.stderr.flush()
+        try:
+            # execvp to find 'ssh' in PATH automatically
+            os.execvp("ssh", proxy_injected_args)
+        except OSError as e:
+            typer.echo(f"Execution failed: {e}", err=True)
+            sys.exit(e.errno)
 
-    try:
-        # Use execvp to find 'ssh' in PATH automatically
-        os.execvp("ssh", final_args)
-    except OSError as e:
-        typer.echo(f"Execution failed: {e}", err=True)
-        sys.exit(e.errno)
 
-
-@ssh_subcommand.command()
+@ssh_manager.command()
 def proxy(hostname: str):
     """
     Example usage: ssh -o ProxyCommand="pyflared ssh proxy %h" user@ssh.yoursite.com

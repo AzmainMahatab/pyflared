@@ -1,17 +1,19 @@
 import asyncio
 import contextlib
-from collections.abc import AsyncIterable, AsyncIterator, Callable, Iterable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Self
+from types import TracebackType
+from typing import Self, override
 
 import aiostream
-from beartype.door import die_if_unbearable
 from loguru import logger
 
 from pyflared.shared.types import (
     AwaitableMaybe,
     ChunkSignal,
+    CmdArg,
     CmdArgs,
+    ProcessCmd,
     CommandError,
     Guard,
     OutputChannel,
@@ -19,7 +21,8 @@ from pyflared.shared.types import (
     Responder,
     StreamChunker, BinaryCallable,
 )
-from pyflared.utils.async_helper import safe_awaiter
+from pyflared.utils.asyncio.wait import safe_awaiter
+from pyflared.utils.type_check import is_of_type
 
 type FinalCmdFun[**P] = Callable[P, ProcessContext]
 
@@ -27,6 +30,7 @@ type Converter[R] = Callable[[ProcessContext], R]
 type Mutator = Callable[[ProcessOutput], AwaitableMaybe[bytes]]
 
 
+# Everything write related
 @dataclass
 class _ProcessWriter:
     process: asyncio.subprocess.Process
@@ -35,15 +39,19 @@ class _ProcessWriter:
         """write to stdin."""
         if not self.process.stdin:
             return
+
         try:
             data = await safe_awaiter(data)
+            if isinstance(data, str):
+                data = data.encode()
             self.process.stdin.write(data)
             await self.process.stdin.drain()
         except BrokenPipeError:
             pass
 
     async def write_line(self, data: AwaitableMaybe[str]):
-        await self.write(data + "\n")
+        line = await safe_awaiter(data) + "\n"
+        await self.write(line)
 
     async def write_from_responders(self, chunk: bytes, channel: OutputChannel, responders: Iterable[Responder]):
         for responder in responders:
@@ -53,17 +61,17 @@ class _ProcessWriter:
 
 
 @dataclass
-class _StreamMaker(_ProcessWriter):
+class _StreamMaker[T](_ProcessWriter):
     chunker: StreamChunker | None = None
     responders: list[Responder] | None = None
 
-    async def stream_context(self, fixed_input: str | None, ) -> aiostream.core.Stream:
+    async def stream_context(self, fixed_input: str | None, ) -> aiostream.core.Stream[T]:
         """Constructs the aiostream graph without starting it."""
         if fixed_input:
             logger.debug(f"Sending fixed input: {fixed_input}")
             await self.write(fixed_input)
 
-        sources: list[aiostream.core.Stream] = []
+        sources: list[aiostream.core.Stream[T]] = []
 
         def channel_tagger(channel: OutputChannel) -> Callable[
             [bytes], AwaitableMaybe[ProcessOutput]]:
@@ -94,7 +102,7 @@ class _StreamMaker(_ProcessWriter):
                         break
 
         # Helper to attach responders/transformers to a raw stream
-        def attach_channel(raw_stream: asyncio.StreamReader, channel: OutputChannel) -> aiostream.core.Stream:
+        def attach_channel(raw_stream: asyncio.StreamReader, channel: OutputChannel) -> aiostream.core.Stream[T]:
 
             source = reader_chunker(raw_stream, channel, self.chunker) if self.chunker else raw_stream
 
@@ -111,10 +119,11 @@ class _StreamMaker(_ProcessWriter):
         return aiostream.stream.merge(*sources)
 
 
-@dataclass()
+@dataclass
 class ProcessInstance(_ProcessWriter, AsyncIterable[ProcessOutput]):
-    merged_iterable: AsyncIterable[ProcessOutput]
+    merged_iterable: AsyncIterator[ProcessOutput]
 
+    @override
     def __aiter__(self):
         return self.merged_iterable
 
@@ -131,6 +140,7 @@ class ProcessInstance(_ProcessWriter, AsyncIterable[ProcessOutput]):
                 yield output.data
 
     async def pipe_to(self, target: Self, mutator: Mutator | None = None) -> None:
+        """Pipes the output of this process to another process."""
         async for output in self:
             if mutator:
                 await target.write(mutator(output))
@@ -143,7 +153,7 @@ class ProcessInstance(_ProcessWriter, AsyncIterable[ProcessOutput]):
             pass
         return await self.process.wait()
 
-    async def wait(self) -> int | None:
+    async def wait(self) -> int:
         """Waits until the process completes."""
         return await self.process.wait()
 
@@ -158,13 +168,13 @@ class ProcessInstance(_ProcessWriter, AsyncIterable[ProcessOutput]):
 
             try:
                 self.process.terminate()
-                await asyncio.wait_for(self.process.wait(), timeout=2.0)
+                _ = await asyncio.wait_for(self.process.wait(), timeout=2.0)
             except ProcessLookupError:
                 # Process already dead
                 pass
             except TimeoutError:
                 self.process.kill()
-                await self.process.wait()
+                _ = await self.process.wait()
 
 
 @dataclass
@@ -173,7 +183,7 @@ class ProcessContext(contextlib.AbstractAsyncContextManager[ProcessInstance]):
     Manages the lifecycle of a subprocess and its associated IO streams.
     """
     binary_path: BinaryCallable
-    cmd_args: CmdArgs
+    cmd_args: ProcessCmd
 
     # Configuration
     guards: list[Guard] | None = None
@@ -193,15 +203,21 @@ class ProcessContext(contextlib.AbstractAsyncContextManager[ProcessInstance]):
                 if not await safe_awaiter(guard()):
                     raise CommandError(f"Precondition failed: {guard.__name__}")
 
+    @override
     async def __aenter__(self) -> ProcessInstance:
         if self.running_process:
             raise RuntimeError("Process already started once")
 
         # 1. Prepare Args
-        args = await safe_awaiter(self.cmd_args)
-        die_if_unbearable(args, CmdArgs)
+        ags = self.cmd_args
+        if is_of_type(ags, AsyncGenerator[CmdArgs, None]):
+            ags = await anext(ags)
 
-        if isinstance(args, str):
+        # elif is_of_type(ags, Awaitable[CmdArgs]):
+        #     args = await ags
+
+        args = await safe_awaiter(ags)
+        if is_of_type(args, CmdArg):
             args = [args]
 
         # 2. Validation
@@ -223,11 +239,17 @@ class ProcessContext(contextlib.AbstractAsyncContextManager[ProcessInstance]):
         self.running_process = ProcessInstance(process, merged_stream)
         return self.running_process
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    @override
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None,
+                        traceback: TracebackType | None, /):
         if not self.running_process:
             return
+
         await self.stack.aclose()
         await self.running_process.stop_gracefully()
+        if isinstance(self.cmd_args, AsyncGenerator):
+            # This is to execute the cleanup code after the process is finished
+            await self.cmd_args.aclose()
 
     # `responders` is also a good place to add logger if needed
     async def start_background(self, responders: Iterable[Responder] | None = None) -> int | None:

@@ -3,7 +3,8 @@ from typing import Final
 
 from cloudflare.types.zero_trust.tunnels.cloudflared.configuration_update_params import ConfigIngress
 
-default_catch_all: Final[ConfigIngress] = ConfigIngress(service="http_status:404")  # type: ignore # default fallback
+default_catch_all: Final[ConfigIngress] = ConfigIngress(
+    service="http_status:404")  # type: ignore # pyright: ignore[reportCallIssue]
 
 
 def get_path_length(rule: ConfigIngress) -> int:
@@ -46,8 +47,8 @@ def fix_ingress_order(ingresses: Iterable[ConfigIngress]) -> list[ConfigIngress]
 
     elif len(catch_all_rules) > 1:
         raise ValueError(
-            f"Invalid Configuration: Found {len(catch_all_rules)} Catch-All rules. "
-            "Only one global catch-all (service without hostname) is allowed."
+            f"Invalid Configuration: Found {len(catch_all_rules)
+            } Catch-All rules. Only one global catch-all (service without hostname) is allowed."
         )
 
     # 3. Sort specific buckets

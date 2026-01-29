@@ -1,14 +1,15 @@
 from datetime import datetime
-from typing import Any, Self
+from typing import Self, Any
 
+from cloudflare.types import CloudflareTunnel
 from cloudflare.types.dns import record_batch_params
 from pydantic import BaseModel, SecretStr
 
-from pyflared import consts
-from pyflared.shared.types import Domain, TunnelId
+from pyflared.shared import consts
+from pyflared.shared.types import Cname, TunnelId
 
 
-class CustomTunnel(BaseModel):
+class TokenizedTunnel(BaseModel):
     """
     A flat Pydantic model representing the essential Tunnel configuration.
     """
@@ -16,10 +17,16 @@ class CustomTunnel(BaseModel):
     name: str
     account_id: str
     created_at: datetime
-    token: SecretStr
+    tunnel_token: SecretStr
+
+    # api_token: SecretStr
+
+    @property
+    def account_tag(self) -> str:
+        return self.account_id
 
     @classmethod
-    def from_cloudflare_response(cls, response_json: dict[str, Any]) -> Self:
+    def from_creation_response(cls, response_json: dict[str, Any]) -> Self:
         """
         Custom factory method to parse the nested Cloudflare API response
         into this flat model.
@@ -32,14 +39,21 @@ class CustomTunnel(BaseModel):
             account_id=result["account_tag"],
             # Pydantic will automatically parse the ISO 8601 string to a datetime object
             created_at=result["created_at"],
-            token=result["token"],
+            tunnel_token=result["token"],
+            # api_token=SecretStr(api_token),
         )
 
-    def build_dns_record(self, domain: Domain) -> record_batch_params.CNAMERecordParam:
+    @classmethod
+    def from_tunnel(cls, cloudflare_tunnel: CloudflareTunnel) -> Self:
+        ...
+
+    def build_dns_record(self, subdomain: Cname, epimeral: bool = False) -> record_batch_params.CNAMERecordParam:
+        comment = f"{consts.api_managed_tag},{consts.ephemeral if epimeral else ""}"
+
         return record_batch_params.CNAMERecordParam(
-            name=domain,
+            name=subdomain,
             type="CNAME",
             content=f"{self.id}{consts.cfargotunnel}",
             proxied=True,
-            comment=consts.api_managed_tag,
+            comment=comment,
         )

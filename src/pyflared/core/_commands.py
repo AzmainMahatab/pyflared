@@ -12,14 +12,20 @@ from pathlib import Path
 
 from loguru import logger
 
-from pyflared import IS_WINDOWS
-from pyflared._patterns import config_pattern, starting_tunnel, tunnel_connection_pattern
-from pyflared.api_sdk.tunnel_manager import TunnelManager
-from pyflared.binary.binary_decorator import BinaryApp
+from pyflared.shared._patterns import config_pattern, starting_tunnel, tunnel_connection_pattern
 from pyflared.api_sdk.parse import Mapping
+from pyflared.binary.binary_decorator import BinaryApp
+from pyflared.shared.consts import IS_WINDOWS
+from pyflared.core.tunnel_manager import TunnelManager
+from pyflared.shared.contants import APP_NAME
 from pyflared.shared.types import Chunk, ChunkSignal, OutputChannel
 
-__all__ = ["binary_path", "binary_version", "run_dns_fixed_tunnel", "run_quick_tunnel", "run_token_tunnel"]
+__all__ = ["binary_path",
+           "binary_version",
+           "run_dns_fixed_tunnel",
+           "run_quick_tunnel",
+           "run_token_tunnel",
+           "cleanup"]
 
 
 @cache
@@ -50,19 +56,21 @@ def _get_files_recursively(entry: Traversable) -> Iterator[Traversable]:
 
 
 # noinspection PyAbstractClass
-_file_manager = ExitStack()
-atexit.register(_file_manager.close)
+global_exit_stack = ExitStack()
+_ = atexit.register(global_exit_stack.close)
 
 
 @cache
 def binary_path() -> pathlib.Path:
     # 1. Get package root
-    root = files(__package__)
+    root_pkg_name: str = __package__.split(".")[0] if __package__ else APP_NAME
+
+    root = files(root_pkg_name)
     binary_ref = root / 'bin' / _binary_filename
 
     # 2. "Mount" the file
     # This guarantees 'path' is a real file system path (original or temp extracted).
-    path = _file_manager.enter_context(as_file(binary_ref))
+    path = global_exit_stack.enter_context(as_file(binary_ref))
 
     # 3. Validation (Now we treat it as a standard file)
     if not path.exists():
@@ -104,11 +112,6 @@ async def run_quick_tunnel(service: str):
     return *quick_tunnel_cmd, service
 
 
-@cloudflared.daemon()
-def run_token_tunnel(token: str):
-    return *token_tunnel_cmd, token
-
-
 def confirm_token() -> bool:
     return True
 
@@ -136,12 +139,21 @@ async def fixed_tunnel_tracing(stream_reader: asyncio.StreamReader, _: OutputCha
 
 
 @cloudflared.daemon(stream_chunker=fixed_tunnel_tracing)
-async def run_dns_fixed_tunnel(
-        mappings: list[Mapping], tunnel_name: str | None = None,
-        api_token: str | None = None, remove_orphan: bool = True, ):
-    tunnel_manager = TunnelManager(api_token)
-    if remove_orphan:
-        await tunnel_manager.remove_orphans()
-    tunnel_token = await tunnel_manager.fixed_dns_tunnel(mappings, tunnel_name=tunnel_name)
-    await tunnel_manager.client.close()
-    return *token_tunnel_cmd, tunnel_token.get_secret_value()
+def run_token_tunnel(token: str):
+    return *token_tunnel_cmd, token
+
+
+@cloudflared.daemon(stream_chunker=fixed_tunnel_tracing)
+async def run_dns_fixed_tunnel(mappings: list[Mapping], tunnel_name: str | None = None, force: bool = False, ):
+    async with TunnelManager() as tm:
+        running_tunnel = await tm.subdomain_mapped_tunnel(mappings, tunnel_name=tunnel_name, force=force)
+        try:
+            yield *token_tunnel_cmd, running_tunnel.tunnel_token.get_secret_value()
+        finally:
+            if not tunnel_name:
+                await running_tunnel.clean_up()
+
+
+async def cleanup(everything: bool = False, ):
+    async with TunnelManager() as tm:
+        await tm.cleanup(everything)

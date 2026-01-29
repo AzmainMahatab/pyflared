@@ -1,9 +1,9 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from functools import wraps
-from typing import overload
+from typing import overload, Any
 
 from pyflared.binary.process import FinalCmdFun, ProcessContext
-from pyflared.shared.types import CmdTargetable, Guard, OutputChannel, Responder, StreamChunker, BinaryCallable
+from pyflared.shared.types import ProcessTargetable, Guard, OutputChannel, Responder, StreamChunker, BinaryCallable
 
 
 def responder_proxy(func: Responder) -> Responder:
@@ -12,21 +12,21 @@ def responder_proxy(func: Responder) -> Responder:
 
 
 # type AnyFunThatReturnsArgs = Callable[..., CmdArgs]
+type AsyncFunction[**P, R] = Callable[P, Coroutine[Any, Any, R]]  # pyright: ignore[reportExplicitAny]
+
 
 class BinaryApp:
 
-    # def __init__(self, binary_path: CmdArg):
-    #     self.binary_path = binary_path
     def __init__(self, binary_path: BinaryCallable):
-        self.binary_path = binary_path
+        self.binary_path: BinaryCallable = binary_path
 
     def daemon[**P](
             self, guards: list[Guard] | None = None,
             stream_chunker: StreamChunker | None = None,  # This is also a good place to add logger if needed
             fixed_input: str | None = None,
             responders: list[Responder] | None = None,
-    ) -> Callable[[CmdTargetable[P]], FinalCmdFun[P]]:
-        def decorator(func: CmdTargetable[P]) -> FinalCmdFun[P]:
+    ) -> Callable[[ProcessTargetable[P]], FinalCmdFun[P]]:
+        def decorator(func: ProcessTargetable[P]) -> FinalCmdFun[P]:
             @wraps(func)
             def wrapper(*args: P.args, **kwargs: P.kwargs) -> ProcessContext:
                 cmd_args = func(*args, **kwargs)
@@ -52,7 +52,7 @@ class BinaryApp:
             responders: list[Responder] | None = None,
             guards: list[Guard] | None = None,
             log_err_stream: bool = True,
-    ) -> Callable[[CmdTargetable[P]], Callable[P, Awaitable[str]]]:
+    ) -> Callable[[ProcessTargetable[P]], AsyncFunction[P, str]]:
         ...
 
     @overload
@@ -63,17 +63,17 @@ class BinaryApp:
             stream_chunker: StreamChunker | None = None,
             responders: list[Responder] | None = None,
             guards: list[Guard] | None = None,
-    ) -> Callable[[CmdTargetable[P]], Callable[P, Awaitable[R]]]:
+    ) -> Callable[[ProcessTargetable[P]], AsyncFunction[P, R]]:
         ...
 
-    def instant[**P, R](
+    def instant[**P, R](  # pyright: ignore[reportInconsistentOverload]
             self,
             converter: Callable[[ProcessContext], Awaitable[R]] | None = None,
             fixed_input: str | None = None,
             stream_chunker: StreamChunker | None = None,
             responders: list[Responder] | None = None,
             guards: list[Guard] | None = None,
-    ) -> Callable[[CmdTargetable[P]], Callable[P, Awaitable[R | str]]]:
+    ) -> Callable[[ProcessTargetable[P]], Callable[P, Awaitable[R | str]]]:
         actual_converter = converter if converter is not None else self.concatenate_stdout
 
         """
@@ -88,7 +88,7 @@ class BinaryApp:
             guards=guards,
         )
 
-        def decorator(func: CmdTargetable[P]) -> Callable[P, Awaitable[R]]:
+        def decorator(func: ProcessTargetable[P]) -> Callable[P, Awaitable[R]]:
             # 2. Wrap the user's function with daemon to get the sync context generator
             # ctx_factory signature: (*args, **kwargs) -> ProcessContext2
             ctx_factory = daemon_decorator(func)

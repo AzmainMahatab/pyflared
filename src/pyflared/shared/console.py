@@ -1,4 +1,5 @@
 import io
+from typing import override
 
 from rich.console import Console
 
@@ -9,9 +10,10 @@ class Pretty:
     before being sent to Loguru.
     """
 
-    def __init__(self, data):
-        self.data = data
+    def __init__(self, data: object):
+        self.data: object = data
 
+    @override
     def __str__(self):
         # Create a private memory buffer for this specific log entry
         buf = io.StringIO()
@@ -19,3 +21,6 @@ class Pretty:
         c = Console(file=buf, force_terminal=True)
         c.print(self.data)
         return buf.getvalue().strip()
+
+
+err_console = Console(stderr=True)
