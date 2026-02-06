@@ -1,5 +1,5 @@
 # Setup Environment
-FROM python:3.12-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 COPY --from=docker.io/astral/uv:latest /uv /uvx /bin/
 
 # Install Build Tools BEFORE copying source code
@@ -23,7 +23,7 @@ RUN uv run scripts/build.py
 # Final Stage - Using Alpine for smaller image size
 # The wheel uses generic linux_* tag which pip can install anywhere.
 # ============================================================================
-FROM python:3.12-alpine
+FROM python:3.14-alpine
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 WORKDIR /app
 
