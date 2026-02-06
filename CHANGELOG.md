@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.0.1-beta8](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta7...v0.0.1-beta8) (2026-02-06)
+
+
+### Bug Fixes
+
+* **deps:** update dependency cloudflare/cloudflared to v2025.11.1 ([#20](https://github.com/AzmainMahatab/pyflared/issues/20)) ([198faea](https://github.com/AzmainMahatab/pyflared/commit/198faea7b9acf51e9af8bb5e41dc1ab8d629e628))
+* **deps:** update dependency cloudflare/cloudflared to v2026 ([#26](https://github.com/AzmainMahatab/pyflared/issues/26)) ([a10d9e6](https://github.com/AzmainMahatab/pyflared/commit/a10d9e6f2598b753512f4f33eaa6aafe981d5889))
+* **deps:** update dependency cloudflare/cloudflared to v2026.1.2 ([#27](https://github.com/AzmainMahatab/pyflared/issues/27)) ([d76853f](https://github.com/AzmainMahatab/pyflared/commit/d76853fddc4068fce10c105c6cb7b07ce28463b2))
+* **deps:** update dependency cloudflare/cloudflared to v2026.2.0 ([#28](https://github.com/AzmainMahatab/pyflared/issues/28)) ([2585a4e](https://github.com/AzmainMahatab/pyflared/commit/2585a4e7c409daff6ae15c45f4e325606825f50f))
+* renovate config ([5a0eb68](https://github.com/AzmainMahatab/pyflared/commit/5a0eb68b3bfa4e1d99fad02aadfa44b8b9e91e4c))
+
+
+### Documentation
+
+* add 525 troubleshooting ([42d495a](https://github.com/AzmainMahatab/pyflared/commit/42d495aaecd5054bd00516c9deef0773b5013421))
+
 ## [0.0.1-beta7](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta6...v0.0.1-beta7) (2026-01-18)
 
 
