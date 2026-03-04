@@ -2,17 +2,12 @@ from collections.abc import Awaitable, Callable, Coroutine
 from functools import wraps
 from typing import overload, Any
 
-from pyflared.binary.process import FinalCmdFun, ProcessContext
-from pyflared.shared.types import ProcessTargetable, Guard, OutputChannel, Responder, StreamChunker, BinaryCallable
+from pyflared.binary.process import ProcessContext
+from pyflared.shared.types import Guard, OutputChannel, Responder, StreamChunker, BinaryCallable, ProcessCmd
 
-
-def responder_proxy(func: Responder) -> Responder:
-    """Identity decorator to validate signatures."""
-    return func
-
-
-# type AnyFunThatReturnsArgs = Callable[..., CmdArgs]
 type AsyncFunction[**P, R] = Callable[P, Coroutine[Any, Any, R]]  # pyright: ignore[reportExplicitAny]
+type ProcessTargetable[**P] = Callable[P, ProcessCmd]
+type FinalCmdFun[**P] = Callable[P, ProcessContext]
 
 
 class BinaryApp:

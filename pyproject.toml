@@ -27,23 +27,18 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: PyPy",
 ]
 dependencies = [
-    "cloudflare",
-    "aiostream",
-    "platformdirs",
-    "loguru",
+    "cloudflare", # official sdk
+    "platformdirs", #find conventional folders
+    "typer", #cli
+    "loguru", #log
     "rich",
-    "typer",
     "beartype",
     "pydantic",
     "pydantic_settings",
     "validators",
-    "sqlmodel",
+    "sqlmodel", #DB
     "aiosqlite",
-    "tldextract",
-    "coolname",
-    "typechecked",
-    "typeguard",
-    "asyncstdlib"
+    "tldextract", #Zone/domain
 ]
 
 [project.urls]
@@ -72,19 +67,15 @@ only-include = [
 ]
 
 [tool.hatch.envs.default]
-dependencies = [
-    "hatch",
-    "hatchling",
-    "klepto",
-]
 scripts = { build-script = "python scripts/build.py" }
 
 [tool.hatch.envs.types]
 extra-dependencies = [
-    "mypy",
+    "pyright",
 ]
+
 [tool.hatch.envs.types.scripts]
-check = "mypy --install-types --non-interactive {args:src/pyflared tests}"
+check = "pyright {args:src/pyflared tests}"
 
 [tool.hatch.envs.hatch-test]
 extra-dependencies = [

@@ -3,8 +3,38 @@ from collections.abc import AsyncIterable, Awaitable, AsyncIterator
 from typing import Callable
 
 
+# def yield_from_async[**P, T](
+#         func: Callable[P, Awaitable[AsyncIterable[T]] | None]
+# ) -> Callable[P, AsyncIterator[T]]:
+#     """
+#     Converts a coroutine returning an AsyncIterable into an AsyncIterator.
+#     """
+#
+#     @functools.wraps(func)
+#     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> AsyncIterator[T]:
+#         if coroutined_async_iterator := func(*args, **kwargs):
+#             async for item in await coroutined_async_iterator:
+#                 yield item
+#
+#     return wrapper
+
+# def yield_from_async[**P, T](
+#         func: Callable[P, Awaitable[AsyncIterable[T]]]
+# ) -> Callable[P, AsyncIterator[T]]:
+#     """
+#     Converts a coroutine returning an AsyncIterable into an AsyncIterator.
+#     """
+#
+#     @functools.wraps(func)
+#     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> AsyncIterator[T]:
+#         iterable = await func(*args, **kwargs)
+#         async for item in iterable:
+#             yield item
+#
+#     return wrapper
+
 def yield_from_async[**P, T](
-        func: Callable[P, Awaitable[AsyncIterable[T]]]
+        func: Callable[P, Awaitable[AsyncIterable[T] | None]]
 ) -> Callable[P, AsyncIterator[T]]:
     """
     Converts a coroutine returning an AsyncIterable into an AsyncIterator.
@@ -12,9 +42,9 @@ def yield_from_async[**P, T](
 
     @functools.wraps(func)
     async def wrapper(*args: P.args, **kwargs: P.kwargs) -> AsyncIterator[T]:
-        iterable = await func(*args, **kwargs)
-        async for item in iterable:
-            yield item
+        if iterable := await func(*args, **kwargs):
+            async for item in iterable:
+                yield item
 
     return wrapper
 
