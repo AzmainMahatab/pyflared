@@ -1,6 +1,6 @@
 from collections.abc import Awaitable, Callable, Coroutine
 from functools import wraps
-from typing import overload, Any
+from typing import Any
 
 from pyflared.binary.process import ProcessContext
 from pyflared.shared.types import Guard, OutputChannel, Responder, StreamChunker, BinaryCallable, ProcessCmd
@@ -39,37 +39,14 @@ class BinaryApp:
 
         return decorator
 
-    @overload
     def instant[**P](
             self,
             fixed_input: str | None = None,
             stream_chunker: StreamChunker | None = None,
             responders: list[Responder] | None = None,
             guards: list[Guard] | None = None,
-            log_err_stream: bool = True,
-    ) -> Callable[[ProcessTargetable[P]], AsyncFunction[P, str]]:
-        ...
-
-    @overload
-    def instant[**P, R](
-            self,
-            converter: Callable[[ProcessContext], Awaitable[R]],
-            fixed_input: str | None = None,
-            stream_chunker: StreamChunker | None = None,
-            responders: list[Responder] | None = None,
-            guards: list[Guard] | None = None,
-    ) -> Callable[[ProcessTargetable[P]], AsyncFunction[P, R]]:
-        ...
-
-    def instant[**P, R](  # pyright: ignore[reportInconsistentOverload]
-            self,
-            converter: Callable[[ProcessContext], Awaitable[R]] | None = None,
-            fixed_input: str | None = None,
-            stream_chunker: StreamChunker | None = None,
-            responders: list[Responder] | None = None,
-            guards: list[Guard] | None = None,
-    ) -> Callable[[ProcessTargetable[P]], Callable[P, Awaitable[R | str]]]:
-        actual_converter = converter if converter is not None else self.concatenate_stdout
+    ) -> Callable[[ProcessTargetable[P]], Callable[P, Awaitable[str]]]:
+        actual_converter = self.concatenate_stdout
 
         """
         Decorates a function to produce a ProcessContext2 via self.daemon,
@@ -83,13 +60,13 @@ class BinaryApp:
             guards=guards,
         )
 
-        def decorator(func: ProcessTargetable[P]) -> Callable[P, Awaitable[R]]:
+        def decorator(func: ProcessTargetable[P]) -> Callable[P, Awaitable[str]]:
             # 2. Wrap the user's function with daemon to get the sync context generator
             # ctx_factory signature: (*args, **kwargs) -> ProcessContext2
             ctx_factory = daemon_decorator(func)
 
             @wraps(func)
-            async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
+            async def wrapper(*args: P.args, **kwargs: P.kwargs) -> str:
                 # 3. Generate the context synchronously
                 process_context = ctx_factory(*args, **kwargs)
 
