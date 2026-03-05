@@ -145,6 +145,26 @@ def run_token_tunnel(token: str):
 
 @cloudflared.daemon(stream_chunker=fixed_tunnel_tracing)
 async def run_dns_fixed_tunnel(mappings: list[Mapping], tunnel_name: str | None = None, force: bool = False, ):
+    """Create a DNS-mapped Cloudflare Tunnel for the given domain-to-service mappings.
+
+    Tunnel lifecycle is determined by the ``tunnel_name`` parameter:
+
+    * **Unnamed (default):** The tunnel is treated as ephemeral. A new tunnel is
+      created on every invocation and both the tunnel and its associated DNS
+      records are automatically deleted on shutdown (e.g. Ctrl+C).
+    * **Named:** The tunnel is treated as persistent. If a tunnel with the given
+      name already exists it is reused; otherwise a new one is created. On
+      shutdown the tunnel and DNS records are preserved so subsequent runs can
+      reconnect instantly. Named tunnels also protect their DNS records from
+      being overwritten by other tunnel setups — unless ``force`` is ``True``.
+
+    Args:
+        mappings: Domain-to-service pairs (e.g. ``api.example.com=localhost:8000``).
+        tunnel_name: Optional human-readable name. ``None`` ⟹ ephemeral,
+            any string ⟹ persistent.
+        force: When ``True``, claim DNS records even if they are currently owned
+            by another named (and potentially active) tunnel.
+    """
     async with TunnelManager() as tm:
         running_tunnel = await tm.subdomain_mapped_tunnel(mappings, tunnel_name=tunnel_name, force=force)
         try:

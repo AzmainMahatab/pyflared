@@ -401,6 +401,33 @@ class TunnelManager:
             tunnel_name: str | None = None,
             force: bool = False,
     ):
+        """Provision a tunnel and configure DNS for the given domain-to-service mappings.
+
+        Tunnel lifecycle depends on ``tunnel_name``:
+
+        * ``None`` (ephemeral) — a new tunnel is created with auto-generated name
+          and tagged as ephemeral. The returned ``ConfiguredTunnel.clean_up``
+          coroutine deletes the tunnel and its DNS records; callers should invoke
+          it on shutdown.
+        * Any string (persistent) — if a tunnel with this name already exists it
+          is reused, otherwise a new one is created *without* the ephemeral tag.
+          ``clean_up`` is still returned but the caller should **not** call it,
+          allowing the tunnel and DNS records to survive across process restarts.
+
+        DNS protection:
+            Active or named tunnels own their DNS records. If a requested
+            subdomain is already pointed at another protected tunnel, the
+            operation will raise ``RuntimeError`` unless ``force=True``.
+
+        Args:
+            mappings: One or more ``Mapping`` objects (``subdomain → service``).
+            tunnel_name: Human-readable tunnel name. ``None`` for ephemeral.
+            force: Claim DNS records even if owned by another named tunnel.
+
+        Returns:
+            A ``ConfiguredTunnel`` with the running tunnel details and a
+            ``clean_up`` coroutine for teardown.
+        """
         if not mappings:
             raise RuntimeError("No mappings provided")
 

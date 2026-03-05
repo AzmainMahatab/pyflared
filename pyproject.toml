@@ -14,7 +14,7 @@ description = "A Python CLI tool for effortless Cloudflare Tunnel management"
 readme = "README.md"
 
 requires-python = ">=3.12"
-license = "MIT"
+license = "MPL-2.0"
 keywords = []
 authors = [
     { name = "Azmain", email = "azmainmahatab012@gmail.com" },
@@ -102,20 +102,6 @@ log_cli_level = "DEBUG"
 log_cli_format = "%(asctime)s [%(levelname)8s] %(message)s (%(filename)s:%(lineno)s)"
 log_cli_date_format = "%Y-%m-%d %H:%M:%S"
 
-[tool.ruff.lint]
-ignore = [
-    "SIM108",
-    "TRY003", # Long msg in Error
-    "ARG002", # Function can have arg even if needed to match signature
-    "EM101", # Ignore "String literal in exception"
-    "EM102", # Ignore "f-string in exception",
-]
-[tool.ruff.lint.per-file-ignores]
-# Ignore "Boolean Trap" errors just for the CLI file
-"src/pyflared/cli/**" = ["FBT001"]
-# Ignore the "Use of assert" rule in all test files
-"tests/**/*.py" = ["S101"]
-
 [tool.coverage.run]
 source_pkgs = ["pyflared", "tests"]
 branch = true
@@ -134,6 +120,20 @@ exclude_lines = [
     "if __name__ == .__main__.:",
     "if TYPE_CHECKING:",
 ]
+
+[tool.ruff.lint]
+ignore = [
+    "SIM108",
+    "TRY003", # Long msg in Error
+    "ARG002", # Function can have arg even if needed to match signature
+    "EM101", # Ignore "String literal in exception"
+    "EM102", # Ignore "f-string in exception",
+]
+[tool.ruff.lint.per-file-ignores]
+# Ignore "Boolean Trap" errors just for the CLI file
+"src/pyflared/cli/**" = ["FBT001"]
+# Ignore the "Use of assert" rule in all test files
+"tests/**/*.py" = ["S101"]
 
 [tool.pyright]
 enableExperimentalFeatures = true

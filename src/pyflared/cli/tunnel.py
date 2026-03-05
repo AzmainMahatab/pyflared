@@ -84,7 +84,14 @@ def cleanup_tunnels_n_dns(
         verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show full cloudflared logs")] = False,
 ) -> None:
     """
-    Clean up tunnels and DNS records. By default, only removes orphans (unnamed tunnels and subdomains if inactive)
+    Clean up tunnels and DNS records.
+
+    By default, only removes orphaned resources: unnamed (ephemeral) tunnels
+    that are inactive and their associated DNS records.
+
+    Use --all to delete ALL tunnels and DNS records, including named and active
+    ones. This is a destructive action and requires --force to skip the
+    confirmation prompt.
     """
     # Protect the destructive --all action with a confirmation prompt
     if all_resources and not force:
@@ -129,11 +136,30 @@ def mapped_tunnel(
         verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Show full cloudflared logs")] = False,
 ):
     """
-        Establish mapped tunnels for one or multiple services.
-        You can pass multiple pairs separated by spaces.
+    Establish mapped tunnels for one or multiple services.
 
-        Example:
-          $ pyflared tunnel mapped example.com=localhost:8000 example2.com=http://localhost:1234 example3.com=https://localhost:1234 example4.com=1234
+    Without --tunnel-name the tunnel is ephemeral: it is created fresh and both
+    the tunnel and its DNS records are automatically cleaned up on shutdown
+    (Ctrl+C).
+
+    With --tunnel-name the tunnel is persistent: it is reused across runs and
+    its DNS records are preserved on shutdown. Named tunnels also guard their
+    DNS records against takeover by other tunnel setups — use --force to
+    override this protection.
+
+    Mapping format (DOMAIN=SERVICE):
+      Port only:        app.com=8000
+      Host:port:        app.com=localhost:3000
+      Explicit scheme:  app.com=https://backend:443
+      Path routing:     app.com/api=localhost:8000  or  api.com=8000/v1/api
+      Unix socket:      sock.com=/var/run/app.sock
+      TLS control:      app.com=https://backend?verify_tls=false|true|custom.com
+      TCP (auto):       db.com=5432  (PostgreSQL, Redis, etc. → tcp://)
+      SSH (auto):       ssh.com=22   (→ ssh://)
+      Special:          test.com=hello_world | http_status:404 | bastion
+
+    Example:
+      $ pyflared tunnel mapped example.com=localhost:8000 example2.com=http://localhost:1234
     """
 
     with isolated_logging(logging.DEBUG if verbose else logging.INFO):
