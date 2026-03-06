@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.1.0-beta7](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta7...v0.1.0-beta7) (2026-03-06)
+
+
+### ⚠ BREAKING CHANGES
+
+* **core:** ssh, reuse, multiple token management and cleanup improvements
+* **parser:** update api and simplify logic
+
+### Features
+
+* **core:** ssh, reuse, multiple token management and cleanup improvements ([614c9ef](https://github.com/AzmainMahatab/pyflared/commit/614c9efb4b72a7a89852ac8d187f01dcb653c9e1))
+
+
+### Bug Fixes
+
+* **ci:** improve build logic ([631c78f](https://github.com/AzmainMahatab/pyflared/commit/631c78f1b4ca3aff4000b7106521b61a345083e7))
+* **deps:** update dependency cloudflare/cloudflared to v2025.11.1 ([#20](https://github.com/AzmainMahatab/pyflared/issues/20)) ([198faea](https://github.com/AzmainMahatab/pyflared/commit/198faea7b9acf51e9af8bb5e41dc1ab8d629e628))
+* **deps:** update dependency cloudflare/cloudflared to v2026 ([#26](https://github.com/AzmainMahatab/pyflared/issues/26)) ([a10d9e6](https://github.com/AzmainMahatab/pyflared/commit/a10d9e6f2598b753512f4f33eaa6aafe981d5889))
+* **deps:** update dependency cloudflare/cloudflared to v2026.1.2 ([#27](https://github.com/AzmainMahatab/pyflared/issues/27)) ([d76853f](https://github.com/AzmainMahatab/pyflared/commit/d76853fddc4068fce10c105c6cb7b07ce28463b2))
+* **deps:** update dependency cloudflare/cloudflared to v2026.2.0 ([#28](https://github.com/AzmainMahatab/pyflared/issues/28)) ([2585a4e](https://github.com/AzmainMahatab/pyflared/commit/2585a4e7c409daff6ae15c45f4e325606825f50f))
+* made more backwards compatible ([82c78b0](https://github.com/AzmainMahatab/pyflared/commit/82c78b08edaf4676028f001c3a629ebcf7b7d977))
+* **parser:** update api and simplify logic ([bc18b89](https://github.com/AzmainMahatab/pyflared/commit/bc18b89795f5d38a8ce49cab89adcbe55592bbe6))
+* pydantic_typer_parse works as expected. ([3eb751e](https://github.com/AzmainMahatab/pyflared/commit/3eb751efdc0fcaedd0ebb3162c8d9bd2401e108b))
+* renovate config ([5a0eb68](https://github.com/AzmainMahatab/pyflared/commit/5a0eb68b3bfa4e1d99fad02aadfa44b8b9e91e4c))
+* **tunnel:** prompt user for token ([eb3e3a5](https://github.com/AzmainMahatab/pyflared/commit/eb3e3a5379b6d6f88e479ab3c903a93d5613f226))
+
+
+### Performance Improvements
+
+* **process:** replaced copyleft aiostream, with our own merger. that resulted in significant code reduction. ([554a956](https://github.com/AzmainMahatab/pyflared/commit/554a9561bbaafecbfc72b49af65377162f9927fe))
+
+
+### Documentation
+
+* add 525 troubleshooting ([42d495a](https://github.com/AzmainMahatab/pyflared/commit/42d495aaecd5054bd00516c9deef0773b5013421))
+* update readme and src code docs. ([fbecf92](https://github.com/AzmainMahatab/pyflared/commit/fbecf92933304a04b106d23ae33f9dec46b7c21f))
+
 ## [0.0.1-beta7](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta6...v0.0.1-beta7) (2026-01-18)
 
 
