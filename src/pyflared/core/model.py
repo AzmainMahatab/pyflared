@@ -1,11 +1,8 @@
+from typing import Self
 from cloudflare.types.zones import Zone
 from sqlmodel import Field
 
 from pyflared.utils.db.sqlmodel import SQLModelBase
-
-
-# def _generate_friendly_name() -> str:
-#     return generate_slug(2)
 
 
 class Token(SQLModelBase, table=True):
@@ -35,16 +32,9 @@ class ZoneEntry(SQLModelBase, table=True):
     account_id: str = Field(index=True)
 
     @classmethod
-    def from_response(cls, zone: Zone) -> ZoneEntry:
+    def from_response(cls, zone: Zone) -> Self:
         return cls(name=zone.name, id=zone.id,
                    account_id=zone.account.id)  # pyright: ignore[reportArgumentType]
 
 
 cache_tables = (ZoneEntry, TokenLookupLink)
-
-# class DataSet[D, T](set[T]):
-#
-#     def __init__(self, data: D):
-#         self.data = data
-
-

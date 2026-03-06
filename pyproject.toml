@@ -86,6 +86,7 @@ extra-args = ["--ignore=tests/binary"]
 
 [tool.hatch.envs.prod]
 template = "hatch-test"
+python = "3.12"
 dev-mode = false
 scripts.test = [
     "uv pip install .",
