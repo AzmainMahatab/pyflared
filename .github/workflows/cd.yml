@@ -126,7 +126,7 @@ jobs:
       # 5. Retag Linux wheels for PyPI (linux_* -> manylinux + musllinux)
       # PyPI enforces platform tag restrictions, so we need proper tags
       - name: Install uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v8.1.0
 
       - name: Retag Linux wheels
         run: uv run scripts/retag.py dist
