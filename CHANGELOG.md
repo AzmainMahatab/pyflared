@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.0](https://github.com/AzmainMahatab/pyflared/compare/v0.1.0-beta7...v0.1.0) (2026-05-27)
+
+
+### Bug Fixes
+
+* **deps:** update dependency cloudflare/cloudflared to v2026.3.0 ([#38](https://github.com/AzmainMahatab/pyflared/issues/38)) ([016a6da](https://github.com/AzmainMahatab/pyflared/commit/016a6da5ecd84bd89a1a757b4c32952399907481))
+* **deps:** update dependency cloudflare/cloudflared to v2026.5.0 ([#43](https://github.com/AzmainMahatab/pyflared/issues/43)) ([60edb41](https://github.com/AzmainMahatab/pyflared/commit/60edb41c1ce9bdf936dbed925640b52dea02b620))
+* **deps:** update dependency cloudflare/cloudflared to v2026.5.1 ([#44](https://github.com/AzmainMahatab/pyflared/issues/44)) ([940d7d2](https://github.com/AzmainMahatab/pyflared/commit/940d7d236ffc6df444509937510aca11c7a83f3d))
+* **deps:** update dependency cloudflare/cloudflared to v2026.5.2 ([#45](https://github.com/AzmainMahatab/pyflared/issues/45)) ([cb405f3](https://github.com/AzmainMahatab/pyflared/commit/cb405f3c218bb9e1f0f62ec80ff81b366ecc1287))
+
 ## [0.1.0-beta7](https://github.com/AzmainMahatab/pyflared/compare/v0.0.1-beta7...v0.1.0-beta7) (2026-03-06)
 
 
